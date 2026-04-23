@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "market_data",
     "trading",
     "bots",
+    "crypto",
 ]
 
 MIDDLEWARE = [

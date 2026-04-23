@@ -14,8 +14,23 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        "OPTIONS": {
+            "timeout": 30,  # wait up to 30s when locked before raising error
+        },
     }
 }
+
+# Enable WAL journal mode for SQLite to allow concurrent reads + writes
+from django.db.backends.signals import connection_created
+
+def _sqlite_wal(sender, connection, **kwargs):
+    if connection.vendor == "sqlite":
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
+
+connection_created.connect(_sqlite_wal)
 
 # Dùng InMemoryChannelLayer khi dev local (không cần Redis)
 CHANNEL_LAYERS = {

@@ -54,12 +54,7 @@ class Command(BaseCommand):
             elif w_created:
                 status = "[Tao moi]"
             else:
-                if wallet.balance < START_CAPITAL and wallet.frozen_balance == 0:
-                    wallet.balance = START_CAPITAL
-                    wallet.save(update_fields=["balance"])
-                    status = "[Nang von]"
-                else:
-                    status = "[Da ton tai]"
+                status = "[Da ton tai]"
 
             self.stdout.write(
                 f"{status}: {bot['display_name']} ({bot['email']}) "

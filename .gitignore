@@ -22,8 +22,11 @@ env/
 *.log
 local_settings.py
 db.sqlite3
+db.sqlite3-shm
+db.sqlite3-wal
 media/
 staticfiles/
+backend/12
 
 # Node
 node_modules/

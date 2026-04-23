@@ -82,6 +82,32 @@ class BotLeaderboardView(APIView):
         return Response(results)
 
 
+class BotHistoryView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from bots.models import BotDailySnapshot
+        days = int(request.query_params.get("days", 7))
+        snapshots = BotDailySnapshot.objects.order_by("-date", "-pnl_pct")[:days * 20]
+        # Group by date
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for s in snapshots:
+            by_date[str(s.date)].append({
+                "bot": s.display_name,
+                "model": s.model,
+                "pnl_pct": s.pnl_pct,
+                "total_value": s.total_value,
+                "trades": s.trades_today,
+            })
+        # Sort dates desc, rank bots by pnl each day
+        result = []
+        for date_str in sorted(by_date.keys(), reverse=True):
+            bots = sorted(by_date[date_str], key=lambda x: -x["pnl_pct"])
+            result.append({"date": date_str, "bots": bots})
+        return Response(result)
+
+
 class BotAnalysisView(APIView):
     permission_classes = [AllowAny]
 

@@ -17,6 +17,11 @@ interface BotResult {
   recent_orders: { symbol: string; side: string; quantity: number; price: number; status: string; created_at: string }[];
 }
 
+interface DayHistory {
+  date: string;
+  bots: { bot: string; model: string; pnl_pct: number; total_value: number; trades: number }[];
+}
+
 interface Analysis {
   created_at: string;
   market_outlook: "BULLISH" | "BEARISH" | "NEUTRAL";
@@ -26,7 +31,7 @@ interface Analysis {
   warning: string | null;
 }
 
-const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
+const MEDALS = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 const MODEL_SHORT: Record<string, string> = {
   "qwen3:30b-a3b": "Qwen3-30B",
   "gemma3:12b": "Gemma3-12B",
@@ -50,17 +55,21 @@ function fmt(n: number) { return new Intl.NumberFormat("vi-VN").format(Math.roun
 export default function BotsPage() {
   const [bots, setBots] = useState<BotResult[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [history, setHistory] = useState<DayHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<"live" | "history">("live");
 
   async function load() {
     try {
-      const [lb, an] = await Promise.all([
+      const [lb, an, hist] = await Promise.all([
         apiClient.get("/bots/leaderboard/"),
         apiClient.get("/bots/analysis/"),
+        apiClient.get("/bots/history/?days=7"),
       ]);
       setBots(lb.data);
       setAnalysis(an.data);
+      setHistory(hist.data);
       if (lb.data.length && !selected) setSelected(lb.data[0].username);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -103,9 +112,12 @@ export default function BotsPage() {
                     <div className={`text-sm font-bold ${up ? "text-price-up" : "text-price-down"}`}>
                       {up ? "+" : ""}{bot.pnl_pct.toFixed(2)}%
                     </div>
+                    <div className={`text-[11px] font-semibold ${up ? "text-price-up" : "text-price-down"}`}>
+                      {up ? "+" : "-"}{fmt(Math.abs(bot.pnl))}đ
+                    </div>
                     {ev && (
                       <div className={`text-[10px] px-1 rounded ${VERDICT_CFG[ev.verdict]?.cls}`}>
-                        {ev.verdict} {ev.score}/10
+                        {ev.score}/10
                       </div>
                     )}
                   </div>
@@ -118,13 +130,60 @@ export default function BotsPage() {
             );
           })}
         </div>
-        <div className="px-4 py-2 border-t border-dark-border">
-          <p className="text-[10px] text-gray-600">Cập nhật 30s • Bot chạy liên tục</p>
+        <div className="px-4 py-2 border-t border-dark-border flex gap-2">
+          <button onClick={() => setTab("live")}
+            className={`text-[10px] px-2 py-0.5 rounded ${tab === "live" ? "bg-price-up/20 text-price-up" : "text-gray-600"}`}>
+            Live
+          </button>
+          <button onClick={() => setTab("history")}
+            className={`text-[10px] px-2 py-0.5 rounded ${tab === "history" ? "bg-purple-500/20 text-purple-400" : "text-gray-600"}`}>
+            7 ngày
+          </button>
         </div>
       </div>
 
-      {/* Right: Detail + Hermes Panel */}
+      {/* Right: Detail + Hermes Panel or History */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* History tab */}
+        {tab === "history" && (
+          <div className="flex-1 overflow-y-auto p-4">
+            <h2 className="text-sm font-bold text-white mb-3">📅 Bảng xếp hạng 7 ngày qua</h2>
+            {history.length === 0 ? (
+              <div className="text-gray-600 text-sm">Chưa có dữ liệu lịch sử. Bot cần chạy ít nhất 1 ngày.</div>
+            ) : history.map(day => (
+              <div key={day.date} className="mb-4">
+                <div className="text-xs text-gray-500 mb-1 font-semibold">{day.date}</div>
+                <div className="bg-dark-surface border border-dark-border rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-dark-border">
+                        <th className="text-left px-3 py-1.5">#</th>
+                        <th className="text-left px-3 py-1.5">Bot</th>
+                        <th className="text-left px-3 py-1.5">Model</th>
+                        <th className="text-right px-3 py-1.5">P&L%</th>
+                        <th className="text-right px-3 py-1.5">Lệnh</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {day.bots.map((b, i) => (
+                        <tr key={b.bot} className="border-b border-dark-border/30">
+                          <td className="px-3 py-1">{MEDALS[i] || i+1}</td>
+                          <td className="px-3 py-1 font-semibold text-white">{b.bot}</td>
+                          <td className="px-3 py-1 text-gray-500">{MODEL_SHORT[b.model] || b.model}</td>
+                          <td className={`px-3 py-1 text-right font-bold ${b.pnl_pct >= 0 ? "text-price-up" : "text-price-down"}`}>
+                            {b.pnl_pct >= 0 ? "+" : ""}{b.pnl_pct.toFixed(2)}%
+                          </td>
+                          <td className="px-3 py-1 text-right text-gray-500">{b.trades}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {tab === "live" && <>
 
         {/* Hermes3 Analyst Banner */}
         {analysis && (
@@ -185,6 +244,9 @@ export default function BotsPage() {
                   <div className={`text-2xl font-bold ${detail.pnl >= 0 ? "text-price-up" : "text-price-down"}`}>
                     {detail.pnl >= 0 ? "+" : ""}{detail.pnl_pct.toFixed(2)}%
                   </div>
+                  <div className={`text-base font-semibold ${detail.pnl >= 0 ? "text-price-up" : "text-price-down"}`}>
+                    {detail.pnl >= 0 ? "Lãi " : "Lỗ "}{fmt(Math.abs(detail.pnl))}đ
+                  </div>
                   {/* Hermes comment for this bot */}
                   {(() => {
                     const ev = analysis?.evaluations?.find(e => e.bot === detail.display_name);
@@ -204,8 +266,9 @@ export default function BotsPage() {
                   { label: "Tổng tài sản", value: fmt(detail.total_value) + "đ", sub: "" },
                   { label: "Tiền mặt", value: fmt(detail.cash) + "đ", sub: `${(detail.cash/detail.total_value*100).toFixed(1)}% danh mục` },
                   { label: "Cổ phiếu", value: fmt(detail.stock_value) + "đ", sub: `${detail.holdings.length} mã` },
-                  { label: "P&L", value: (detail.pnl >= 0 ? "+" : "") + fmt(detail.pnl) + "đ",
-                    sub: "", color: detail.pnl >= 0 ? "text-price-up" : "text-price-down" },
+                  { label: detail.pnl >= 0 ? "💰 Lãi" : "📉 Lỗ",
+                    value: (detail.pnl >= 0 ? "+" : "-") + fmt(Math.abs(detail.pnl)) + "đ",
+                    sub: `so với vốn 100,000,000đ`, color: detail.pnl >= 0 ? "text-price-up" : "text-price-down" },
                   { label: "Lệnh khớp", value: detail.matched_orders.toString(), sub: "" },
                   { label: "Đang chờ", value: detail.pending_orders.toString(), sub: "" },
                 ].map(s => (
@@ -286,6 +349,7 @@ export default function BotsPage() {
             <div className="flex items-center justify-center h-64 text-gray-600">Chọn bot để xem chi tiết</div>
           )}
         </div>
+        </>}
       </div>
     </div>
   );

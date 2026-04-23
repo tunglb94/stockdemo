@@ -110,27 +110,55 @@ def _run_bots():
         logger.error(f"[bots] Loi chay bots: {e}")
 
 
+def _pre_market_analysis():
+    """Chạy 1 lần trước giờ mở cửa: bot đọc tin tức, phân tích, chuẩn bị lệnh."""
+    try:
+        from django.core.management import call_command
+        logger.info("[bots] Pre-market: bat dau phan tich truoc gio mo cua...")
+        call_command("run_bots", "--no-analyst")
+        logger.info("[bots] Pre-market: hoan thanh.")
+    except Exception as e:
+        logger.error(f"[bots] Pre-market loi: {e}")
+
+
 def _bot_continuous_loop():
     """
-    Vòng lặp liên tục cho AI bots:
-    - Trong giờ giao dịch: chạy mỗi 5 phút
-    - Ngoài giờ giao dịch: chạy mỗi 30 phút (để test được bất kỳ lúc nào)
-    Chờ 45s trước vòng đầu tiên để giá VN30 kịp load.
+    Vòng lặp AI bots:
+    - 8:30 trước mở cửa: chạy 1 lần phân tích pre-market
+    - 9:00 - 11:30 và 13:00 - 14:45: chạy mỗi 5 phút
+    - Ngoài giờ GD: ngủ, không chạy bot
     """
+    from datetime import time as dtime
+
     time.sleep(45)
+
+    pre_market_done_date = None  # Tránh chạy pre-market nhiều lần trong ngày
+
     while True:
-        cycle_start = time.monotonic()
-        _run_bots()
-        elapsed = time.monotonic() - cycle_start
+        n = _now()
+        t = n.time()
+        today = n.date()
 
+        # Pre-market analysis: 8:30 → 8:59, chỉ ngày thường
+        if (n.weekday() < 5
+                and dtime(8, 30) <= t < dtime(9, 0)
+                and pre_market_done_date != today):
+            pre_market_done_date = today
+            _pre_market_analysis()
+            time.sleep(60)
+            continue
+
+        # Trong giờ giao dịch: chạy bot, nghỉ 5 phút
         if _is_market_open():
-            interval = 5 * 60   # 5 phút trong giờ giao dịch
+            cycle_start = time.monotonic()
+            _run_bots()
+            elapsed = time.monotonic() - cycle_start
+            sleep = max(0, 5 * 60 - elapsed)
+            logger.info(f"[bots] Vong tiep theo sau {sleep/60:.1f} phut.")
+            time.sleep(sleep)
         else:
-            interval = 30 * 60  # 30 phút ngoài giờ
-
-        sleep = max(0, interval - elapsed)
-        logger.info(f"[bots] Vong tiep theo sau {sleep/60:.1f} phut.")
-        time.sleep(sleep)
+            # Ngoài giờ GD: ngủ 60s rồi check lại
+            time.sleep(60)
 
 
 def _realtime_loop():

@@ -11,7 +11,8 @@ const navItems = [
   { href: "/market", label: "Bảng giá", icon: "◈" },
   { href: "/portfolio", label: "Danh mục", icon: "◉" },
   { href: "/orders", label: "Lịch sử lệnh", icon: "◎" },
-  { href: "/bots", label: "AI Bot Race", icon: "🤖" },
+  { href: "/bots", label: "AI Bot Race (VN)", icon: "🤖" },
+  { href: "/crypto", label: "CryptoSim 24/7", icon: "₿" },
 ];
 
 export default function Sidebar() {

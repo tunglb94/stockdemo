@@ -83,18 +83,21 @@ class Command(BaseCommand):
 
         self.stdout.write(f"  Hoan thanh vong giao dich.")
 
+        # Luu daily snapshot cho tat ca bot
+        _save_daily_snapshots(analyst_inputs, START_CAPITAL)
+
         # Hermes3 Analyst — chay sau tat ca bot
         if not no_analyst and len(analyst_inputs) >= 1:
-            self.stdout.write(f"\n  [Hermes3] Dang phan tich ket qua...")
+            self.stdout.write(f"\n  [Analyst] Dang phan tich ket qua...")
             try:
                 from bots.analyst import run_analyst
                 ok = run_analyst(analyst_inputs)
                 if ok:
-                    self.stdout.write("  [Hermes3] Da luu nhan xet.")
+                    self.stdout.write("  [Analyst] Da luu nhan xet.")
                 else:
-                    self.stdout.write("  [Hermes3] Khong phan tich duoc (kiem tra Ollama).")
+                    self.stdout.write("  [Analyst] Khong phan tich duoc (kiem tra Ollama).")
             except Exception as e:
-                self.stdout.write(f"  [Hermes3] Loi: {e}")
+                self.stdout.write(f"  [Analyst] Loi: {e}")
 
 
 def _make_analyst_input(bot_def, wallet, portfolio, decisions, START_CAPITAL):
@@ -115,6 +118,8 @@ def _make_analyst_input(bot_def, wallet, portfolio, decisions, START_CAPITAL):
     pnl_pct = float(pnl / START_CAPITAL * 100)
 
     return {
+        "username": bot_def["username"],
+        "email": bot_def["email"],
         "display_name": bot_def["display_name"],
         "model": bot_def["model"],
         "strategy_short": bot_def["system_prompt"].split("\n")[0][:80],
@@ -132,4 +137,35 @@ def _make_analyst_input(bot_def, wallet, portfolio, decisions, START_CAPITAL):
             for d in (decisions or [])
             if d.get("action") in ("BUY", "SELL")
         ],
+        "total_value_raw": float(total),
     }
+
+
+def _save_daily_snapshots(analyst_inputs: list, START_CAPITAL):
+    """Luu snapshot P&L cuoi ngay cho tung bot vao DB."""
+    from datetime import date
+    from bots.models import BotDailySnapshot
+    from trading.models import Order
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    today = date.today()
+    for inp in analyst_inputs:
+        try:
+            user = User.objects.get(email=inp.get("email", ""))
+            matched = Order.objects.filter(user=user, status="MATCHED").count()
+        except Exception:
+            matched = 0
+
+        BotDailySnapshot.objects.update_or_create(
+            date=today,
+            bot_username=inp.get("username", inp["display_name"]),
+            defaults={
+                "display_name": inp["display_name"],
+                "model": inp["model"],
+                "total_value": int(inp.get("total_value_raw", 100_000_000)),
+                "pnl_pct": inp["pnl_pct"],
+                "matched_orders": matched,
+                "trades_today": len(inp.get("decisions_this_round", [])),
+            }
+        )
