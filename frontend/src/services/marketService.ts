@@ -9,6 +9,12 @@ export const marketService = {
     return res.data.results ?? (res.data as unknown as Stock[]);
   },
 
+  async getStocksRaw(params: Record<string, string> = {}): Promise<Stock[]> {
+    const res = await apiClient.get<{ results: Stock[] } | Stock[]>("/market/stocks/", { params });
+    const data = res.data;
+    return Array.isArray(data) ? data : (data.results ?? []);
+  },
+
   async getStock(symbol: string): Promise<Stock> {
     const res = await apiClient.get<Stock>(`/market/stocks/${symbol}/`);
     return res.data;

@@ -56,13 +56,7 @@ def _can_sell_match(order: Order, market_price: Decimal, snapshot) -> bool:
 
 def _get_execution_price(order: Order, market_price: Decimal) -> Decimal:
     """Xác định giá khớp thực tế."""
-    if order.order_type in ("LO",) and order.price:
-        # Lệnh LO khớp tại giá đặt nếu thị trường có lợi hơn, hoặc tại giá thị trường
-        if order.side == "BUY":
-            return min(order.price, market_price)
-        else:
-            return max(order.price, market_price)
-    return market_price  # MP, ATO, ATC khớp tại giá thị trường
+    return market_price  # Luôn khớp tại giá thị trường, đúng quy tắc sàn VN
 
 
 def _execute_order(order: Order, exec_price: Decimal, quantity: int):

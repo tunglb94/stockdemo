@@ -16,9 +16,14 @@ class StockListView(generics.ListAPIView):
 
     def get_queryset(self):
         qs = Stock.objects.filter(is_active=True)
-        vn30_only = self.request.query_params.get("vn30")
-        if vn30_only:
+        if self.request.query_params.get("vn30"):
             qs = qs.filter(is_vn30=True)
+        exchange = self.request.query_params.get("exchange", "").upper()
+        if exchange in ("HOSE", "HNX", "UPCOM"):
+            qs = qs.filter(exchange=exchange)
+        search = self.request.query_params.get("q", "").upper()
+        if search:
+            qs = qs.filter(symbol__istartswith=search)
         return qs.prefetch_related("snapshots").order_by("-is_vn30", "symbol")
 
 

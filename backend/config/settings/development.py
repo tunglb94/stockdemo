@@ -38,8 +38,8 @@ LOGGING = {
         "level": "INFO",
     },
     "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO"},
-        "market_data": {"handlers": ["console"], "level": "DEBUG"},
-        "trading": {"handlers": ["console"], "level": "DEBUG"},
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "market_data": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
+        "trading": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
     },
 }

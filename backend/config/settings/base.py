@@ -4,6 +4,16 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+# Load .env từ root project (2 cấp trên backend/)
+_env_file = BASE_DIR.parent / ".env"
+if _env_file.exists():
+    with open(_env_file, encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-replace-in-production")
 
 INSTALLED_APPS = [
@@ -24,6 +34,7 @@ INSTALLED_APPS = [
     "accounts",
     "market_data",
     "trading",
+    "bots",
 ]
 
 MIDDLEWARE = [

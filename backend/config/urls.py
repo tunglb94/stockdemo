@@ -7,5 +7,6 @@ urlpatterns = [
         path("accounts/", include("accounts.urls")),
         path("market/", include("market_data.urls")),
         path("trading/", include("trading.urls")),
+        path("bots/", include("bots.urls")),
     ])),
 ]
