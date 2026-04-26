@@ -46,7 +46,7 @@ Giu 25% tien mat.
         "username": "crypto_beta",
         "email": "crypto.beta@stocksim.local",
         "display_name": "Beta (Safe Haven)",
-        "model": "deepseek-v2:16b",
+        "model": "deepseek-coder-v2:16b",
         "system_prompt": f"""Ban la nha dau tu crypto than trong, uu tien bao toan von.
 Chien luoc: Chi giu BTC, ETH va VANG (XAU). Tranh meme coin va altcoin rui ro cao.
 Giu 40% tien mat. Chi mua khi gia giam manh (dip buyer).
@@ -56,7 +56,7 @@ Giu 40% tien mat. Chi mua khi gia giam manh (dip buyer).
         "username": "crypto_gamma",
         "email": "crypto.gamma@stocksim.local",
         "display_name": "Gamma (Altcoin Hunter)",
-        "model": "qwen2.5:14b",
+        "model": "qwen3.5:9b",
         "system_prompt": f"""Ban la chuyen gia altcoin, san tim co hoi tang truong cao.
 Chien luoc: Tap trung vao Layer 1 (SOL, AVAX, NEAR, SUI, APT) va DeFi (LINK, UNI, INJ, ARB).
 Danh muc da dang, vi tri nho. Chap nhan rui ro cao de co loi nhuan cao.

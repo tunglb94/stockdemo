@@ -239,13 +239,5 @@ def _main_loop():
 
 
 def start():
-    """Gọi từ AppConfig.ready() — chỉ khởi động 1 lần duy nhất."""
-    global _started
-    with _start_lock:
-        if _started:
-            return
-        _started = True
-
-    t = threading.Thread(target=_main_loop, name="market-feed", daemon=True)
-    t.start()
-    logger.info("[feed] Market feed thread started.")
+    """Disabled — VN stock price fetching removed to free resources."""
+    logger.info("[feed] Market feed disabled (VN stock fetching turned off).")

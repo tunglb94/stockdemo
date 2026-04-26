@@ -344,14 +344,34 @@ Best entry windows (UTC):
 Weekly: Monday open often sweeps liquidity → wait for direction confirmation
 ```
 
-### Exit Strategy
+### Exit Strategy — AGGRESSIVE HOLD WITH TRAILING STOP FROM PEAK
 ```python
-# Partial take profit (scale out):
-at_r1_1_ratio: close 30%   # near-guaranteed profit
-at_r2_1_ratio: close 40%   # strong profit
-remainder:     trail_stop  # let it run with trailing stop
+# PHILOSOPHY: "Let winners run" — đừng chốt lời sớm khi còn đà tăng.
+# Chỉ bán khi giá đã kéo ngược LẠI so với đỉnh lời, không bán khi vẫn còn lên.
 
-# Trailing stop: move stop to breakeven when +R1:R1, then trail 1.5x ATR from peak
+# Trailing stop từ đỉnh lời (áp dụng cho SPOT):
+if current_pnl_pct >= 5:
+    HOLD  # đang lời, giữ nguyên — không bán vội
+if current_pnl_pct was > 20% recently and now dropped back to < 10%:
+    SELL  # đỉnh lời >20%, kéo ngược >10% → chốt
+if current_pnl_pct was > 50% recently and now dropped back 20-30%:
+    SELL  # đỉnh lời lớn, trail rộng hơn
+
+# Ví dụ thực tế:
+# PnL đỉnh +40% → nếu hiện tại còn +25%: HOLD (chỉ giảm 15%)
+# PnL đỉnh +40% → nếu hiện tại chỉ còn +15%: SELL (giảm 25% từ đỉnh)
+# PnL đỉnh +15% → nếu hiện tại còn +10%: HOLD
+# PnL đỉnh +15% → nếu hiện tại còn +2%: SELL (gần hòa, mất lãi)
+
+# Cắt lỗ: vẫn giữ nguyên ở -7% (không thay đổi)
+if current_pnl_pct < -7:
+    SELL  # cắt lỗ cứng
+
+# PHÂN LOẠI KẾT QUẢ TRADE:
+# PnL > 0%  → THẮNG (win)
+# PnL = 0%  → HÒA (break even) — KHÔNG phải thua
+# PnL < 0%  → THUA (loss)
+# Ghi nhận PnL 0% là "hoa" hoặc "break even", KHÔNG ghi là "thua".
 ```
 """
 
@@ -379,8 +399,10 @@ PRACTICAL_SCENARIOS = """
 1. Win rate 50% + R:R 2:1 = profitable long-term (positive expectancy)
 2. Never risk > 15% of balance on a single position margin
 3. The best trades are obvious — if you need to convince yourself, skip it
-4. Cut losses fast. Let winners run. This is the entire game.
+4. **Cut losses fast. Let winners run. Đây là toàn bộ trò chơi.**
 5. "The market can stay irrational longer than you can stay solvent" — Keynes
+6. **ĐỪNG bán khi đang lời chỉ vì "lãi rồi, chốt thôi"** — giữ đến khi trailing stop kích hoạt.
+7. **PnL = 0% là HÒA (break even), KHÔNG phải thua** — ghi nhận đúng, đừng coi là thất bại.
 """
 
 

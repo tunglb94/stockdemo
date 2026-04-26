@@ -11,33 +11,25 @@ _bot_loop_started = False
 _bot_loop_lock = threading.Lock()
 
 
-_CRYPTO_SPOT_ENABLED = False  # Tam dung spot bots, nhuong VRAM cho futures
-_CRYPTO_INTERVAL = 100   # 3x faster than original 5min (was 300s)
-_FUTURES_INTERVAL = 100
-
-
-def _crypto_bot_loop():
-    if not _CRYPTO_SPOT_ENABLED:
-        logger.info("Crypto spot bots disabled (_CRYPTO_SPOT_ENABLED=False).")
-        return
-    time.sleep(30)
-    while True:
-        try:
-            from django.core.management import call_command
-            call_command("run_crypto_bots")
-        except Exception as e:
-            logger.error(f"Crypto bot loop error: {e}")
-        time.sleep(_CRYPTO_INTERVAL)
+_FUTURES_INTERVAL = 120  # nghỉ 120s giữa các vòng (~94s/round + 120s = ~3.5 phút/chu kỳ)
 
 
 def _futures_bot_loop():
-    time.sleep(60)  # stagger after crypto bots
+    time.sleep(30)  # chờ Django + DB ready
     while True:
         try:
             from django.core.management import call_command
             call_command("run_futures_bots")
         except Exception as e:
             logger.error(f"Futures bot loop error: {e}")
+
+        # Sau mỗi round: tự động phân tích lệnh chưa được xem xét
+        try:
+            from crypto.bots.futures_analyzer import run_auto_analysis
+            run_auto_analysis(max_per_run=5)
+        except Exception as e:
+            logger.error(f"Auto-analyzer error: {e}")
+
         time.sleep(_FUTURES_INTERVAL)
 
 
@@ -65,6 +57,5 @@ class CryptoConfig(AppConfig):
         with _bot_loop_lock:
             if not _bot_loop_started:
                 _bot_loop_started = True
-                threading.Thread(target=_crypto_bot_loop, daemon=True, name="crypto_bot_loop").start()
                 threading.Thread(target=_futures_bot_loop, daemon=True, name="futures_bot_loop").start()
-                logger.info(f"Crypto + Futures bot loops started (interval={_CRYPTO_INTERVAL}s).")
+                logger.info(f"Futures bot loop started (interval={_FUTURES_INTERVAL}s). Spot bots disabled.")

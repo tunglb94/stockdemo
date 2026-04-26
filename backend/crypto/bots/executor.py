@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 logger = logging.getLogger(__name__)
 
 
-def execute_crypto_decisions(user, decisions: list, portfolio: dict) -> list:
+def execute_crypto_decisions(user, decisions: list, portfolio: dict, bot_reasoning: str = "") -> list:
     from crypto.models import CryptoAsset, CryptoWallet, CryptoPortfolio, CryptoOrder
 
     logs = []
@@ -16,7 +16,7 @@ def execute_crypto_decisions(user, decisions: list, portfolio: dict) -> list:
     for d in decisions:
         action = str(d.get("action", "")).upper()
         symbol = str(d.get("symbol", "")).upper()
-        reason = str(d.get("reason", ""))[:80]
+        reason = str(d.get("reason", ""))[:200]
 
         if action == "HOLD":
             logs.append(f"    HOLD: {reason}")
@@ -67,6 +67,7 @@ def execute_crypto_decisions(user, decisions: list, portfolio: dict) -> list:
             CryptoOrder.objects.create(
                 user=user, asset=asset, side="BUY",
                 quantity=quantity, price_usd=price, total_usd=quantity_usd,
+                bot_reasoning=f"{bot_reasoning} | {reason}".strip(" |"),
             )
             logs.append(
                 f"    BUY {symbol}: {float(quantity):.6f} @ ${float(price):.4f} (${float(quantity_usd):.2f}) | {reason}"
@@ -86,8 +87,14 @@ def execute_crypto_decisions(user, decisions: list, portfolio: dict) -> list:
                 logs.append(f"    SKIP SELL {symbol}: khong co tai san")
                 continue
 
+            # Lưu cost_basis trước khi xóa/cập nhật portfolio
+            cost_basis = pos.avg_cost_usd
             quantity = pos.quantity * quantity_pct / Decimal("100")
             total = quantity * price
+
+            # Tính realized PnL
+            cost_total = quantity * cost_basis
+            pnl_usd = total - cost_total
 
             wallet.refresh_from_db()
             wallet.balance_usd += total
@@ -99,12 +106,20 @@ def execute_crypto_decisions(user, decisions: list, portfolio: dict) -> list:
             else:
                 pos.save(update_fields=["quantity"])
 
+            pnl_pct = float((price - cost_basis) / cost_basis * 100) if cost_basis > 0 else 0
+
             CryptoOrder.objects.create(
                 user=user, asset=asset, side="SELL",
                 quantity=quantity, price_usd=price, total_usd=total,
+                bot_reasoning=f"{bot_reasoning} | {reason}".strip(" |"),
+                cost_basis_usd=cost_basis,
+                pnl_usd=pnl_usd,
             )
+
+            pnl_label = "hoa" if abs(pnl_pct) < 0.01 else f"{pnl_pct:+.2f}%"
             logs.append(
-                f"    SELL {symbol}: {float(quantity):.6f} @ ${float(price):.4f} (${float(total):.2f}) | {reason}"
+                f"    SELL {symbol}: {float(quantity):.6f} @ ${float(price):.4f} "
+                f"(${float(total):.2f}) PnL={pnl_label} | {reason}"
             )
 
     return logs

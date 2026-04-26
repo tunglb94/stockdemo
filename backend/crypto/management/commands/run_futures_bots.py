@@ -57,7 +57,7 @@ class Command(BaseCommand):
                 continue
 
             positions = get_futures_portfolio_state(user)
-            context   = build_futures_context(positions, wallet.balance_usd)
+            context   = build_futures_context(positions, wallet.balance_usd, bot_username=bot_def["username"])
 
             result = ask_llm(
                 model=model,

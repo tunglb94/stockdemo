@@ -95,7 +95,6 @@ class CryptoPriceStreamView(View):
         resp = StreamingHttpResponse(stream(), content_type="text/event-stream; charset=utf-8")
         resp["Cache-Control"] = "no-cache, no-store"
         resp["X-Accel-Buffering"] = "no"   # disable nginx buffering
-        resp["Connection"] = "keep-alive"
         return resp
 
 
@@ -268,7 +267,7 @@ class CryptoBotLeaderboardView(APIView):
             pnl = total - START_CAPITAL_USD
             pnl_pct = float(pnl / START_CAPITAL_USD * 100)
 
-            recent = CryptoOrder.objects.filter(user=user).select_related("asset")[:5]
+            recent = CryptoOrder.objects.filter(user=user).select_related("asset", "analysis")[:5]
 
             results.append({
                 "username": bot_def["username"],
@@ -284,11 +283,15 @@ class CryptoBotLeaderboardView(APIView):
                 "matched_orders": CryptoOrder.objects.filter(user=user, status="MATCHED").count(),
                 "recent_orders": [
                     {
+                        "id": o.id,
                         "symbol": o.asset.symbol,
                         "side": o.side,
                         "quantity": float(o.quantity),
                         "price": float(o.price_usd),
                         "total": float(o.total_usd),
+                        "pnl_usd": float(o.pnl_usd) if o.pnl_usd is not None else None,
+                        "pnl_pct": o.pnl_pct,
+                        "has_analysis": bool(getattr(o, 'analysis', None)),
                         "created_at": o.created_at.strftime("%d/%m %H:%M"),
                     }
                     for o in recent
@@ -395,7 +398,7 @@ class FuturesBotLeaderboardView(APIView):
 
             recent = FuturesPosition.objects.filter(
                 user=user, status__in=["CLOSED", "LIQUIDATED"]
-            ).select_related("asset").order_by("-closed_at")[:30]
+            ).select_related("asset", "analysis").order_by("-closed_at")[:30]
 
             results.append({
                 "username": bot_def["username"],
@@ -424,16 +427,18 @@ class FuturesBotLeaderboardView(APIView):
                 },
                 "recent_closed": [
                     {
-                        "symbol":     p.asset.symbol,
-                        "direction":  p.direction,
-                        "entry":      float(p.entry_price),
-                        "exit":       float(p.exit_price or 0),
-                        "pnl":        float(p.realized_pnl or 0),
-                        "margin_usd": float(p.margin_usd),
-                        "leverage":   p.leverage,
-                        "status":     p.status,
-                        "opened_at":  _fmt_vn(p.opened_at),
-                        "closed_at":  _fmt_vn(p.closed_at),
+                        "id":           p.id,
+                        "symbol":       p.asset.symbol,
+                        "direction":    p.direction,
+                        "entry":        float(p.entry_price),
+                        "exit":         float(p.exit_price or 0),
+                        "pnl":          float(p.realized_pnl or 0),
+                        "margin_usd":   float(p.margin_usd),
+                        "leverage":     p.leverage,
+                        "status":       p.status,
+                        "opened_at":    _fmt_vn(p.opened_at),
+                        "closed_at":    _fmt_vn(p.closed_at),
+                        "has_analysis": hasattr(p, "analysis"),
                     }
                     for p in recent
                 ],
@@ -441,6 +446,190 @@ class FuturesBotLeaderboardView(APIView):
 
         results.sort(key=lambda x: -x["pnl_pct"])
         return Response(results)
+
+
+class AnalyzeTradeView(APIView):
+    """
+    POST /crypto/bots/analyze-trade/<order_id>/
+    Qwen 3.5 phân tích sâu 1 lệnh trade. Cache vào TradeAnalysis.
+    Auto-extract LearnedLesson nếu |PnL| > 5%.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, order_id: int):
+        from crypto.models import CryptoOrder, TradeAnalysis
+        from crypto.bots.analyzer import analyze_trade, should_extract_lesson, save_learned_lesson, _get_username_from_user
+
+        try:
+            order = CryptoOrder.objects.select_related("user", "asset").get(id=order_id)
+        except CryptoOrder.DoesNotExist:
+            return Response({"error": "Order not found"}, status=404)
+
+        # Trả cache nếu đã analyze rồi
+        try:
+            cached = order.analysis
+            return Response({
+                "cached": True,
+                "order_id": order_id,
+                "analysis": cached.analysis_text,
+                "quality_score": cached.quality_score,
+            })
+        except TradeAnalysis.DoesNotExist:
+            pass
+
+        # Gọi Qwen 3.5
+        result = analyze_trade(order)
+        if not result:
+            return Response({"error": "Analyzer LLM không phản hồi. Kiểm tra Ollama."}, status=503)
+
+        # Lưu cache
+        TradeAnalysis.objects.create(
+            order=order,
+            analysis_text=result.get("why", ""),
+            quality_score=result.get("quality_score", 0.5),
+        )
+
+        # Auto-extract lesson nếu đủ điều kiện
+        lesson_saved = False
+        bot_username = _get_username_from_user(order.user)
+        if bot_username and should_extract_lesson(order, result):
+            save_learned_lesson(order, bot_username, result)
+            lesson_saved = True
+
+        return Response({
+            "cached": False,
+            "order_id": order_id,
+            "symbol": order.asset.symbol,
+            "side": order.side,
+            "why": result.get("why"),
+            "verdict": result.get("verdict"),
+            "quality_score": result.get("quality_score"),
+            "lesson": result.get("lesson"),
+            "lesson_tags": result.get("lesson_tags"),
+            "lesson_polarity": result.get("lesson_polarity"),
+            "lesson_saved": lesson_saved,
+        })
+
+
+class AnalyzeFuturesTradeView(APIView):
+    """
+    POST /crypto/futures/analyze-trade/<position_id>/
+    Qwen phân tích 1 lệnh futures đã đóng.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, position_id: int):
+        from crypto.models import FuturesPosition, FuturesTradeAnalysis
+        from bots.ollama_client import ask_llm
+
+        try:
+            pos = FuturesPosition.objects.select_related("user", "asset").get(
+                id=position_id, status__in=["CLOSED", "LIQUIDATED"]
+            )
+        except FuturesPosition.DoesNotExist:
+            return Response({"error": "Position not found"}, status=404)
+
+        # Trả cache nếu đã phân tích rồi
+        try:
+            cached = pos.analysis
+            import json as _json
+            cached_data = _json.loads(cached.analysis_text)
+            return Response({
+                "cached": True,
+                "position_id": position_id,
+                "symbol": pos.asset.symbol,
+                "direction": pos.direction,
+                **cached_data,
+                "lesson_saved": True,
+            })
+        except FuturesTradeAnalysis.DoesNotExist:
+            pass
+
+        pnl = float(pos.realized_pnl or 0)
+        entry = float(pos.entry_price)
+        exit_p = float(pos.exit_price or entry)
+        notional = float(pos.margin_usd) * pos.leverage
+        pnl_pct = (pnl / float(pos.margin_usd) * 100) if pos.margin_usd else 0
+        verdict = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+        if pos.status == "LIQUIDATED":
+            verdict = "LIQUIDATED"
+
+        system_prompt = "Bạn là chuyên gia phân tích giao dịch futures crypto. Hãy phân tích lệnh trade và đưa ra nhận xét thực tế, ngắn gọn bằng tiếng Việt."
+        user_message = f"""Phân tích lệnh futures sau:
+- Bot: {pos.user.username}
+- Mã: {pos.asset.symbol} | Hướng: {pos.direction}
+- Entry: ${entry:.4f} → Exit: ${exit_p:.4f}
+- Margin: ${float(pos.margin_usd):.0f} × {pos.leverage}x | Notional: ${notional:.0f}
+- PnL thực: ${pnl:+.2f} ({pnl_pct:+.1f}% trên margin)
+- Trạng thái: {pos.status}
+- Mở: {pos.opened_at} | Đóng: {pos.closed_at}
+
+Trả về JSON:
+{{
+  "why": "Phân tích 2-3 câu: entry đúng xu hướng không, leverage phù hợp không, exit đúng lúc không",
+  "verdict": "{verdict}",
+  "quality_score": 0.0,
+  "lesson": "bài học rút ra hoặc null",
+  "lesson_tags": ["tag"],
+  "lesson_polarity": "positive hoặc negative"
+}}"""
+
+        data = ask_llm("phi4:14b", system_prompt, user_message, num_ctx=2048, num_predict=400)
+        if not data:
+            return Response({"error": "LLM không phản hồi. Kiểm tra Ollama."}, status=503)
+
+        # Lưu lesson nếu đủ điều kiện (|PnL| > 5% và có lesson text)
+        lesson_saved = False
+        lesson_text = data.get("lesson")
+        quality = float(data.get("quality_score") or 0.5)
+        if lesson_text and abs(pnl_pct) > 5.0 and quality >= 0.55:
+            try:
+                from crypto.models import LearnedLesson
+                tags = data.get("lesson_tags", ["universal"])
+                tags_str = ",".join(str(t).strip() for t in tags) if isinstance(tags, list) else str(tags)
+                polarity = data.get("lesson_polarity", "")
+                if polarity not in ("GOOD", "WARNING"):
+                    polarity = "WARNING" if pnl < 0 else "GOOD"
+                LearnedLesson.objects.create(
+                    source_order=None,
+                    source_bot=pos.user.username,
+                    lesson_text=lesson_text,
+                    polarity=polarity,
+                    tags=tags_str,
+                    quality_score=quality,
+                    pnl_at_extraction=pnl_pct,
+                )
+                lesson_saved = True
+            except Exception as e:
+                logger.warning(f"Could not save futures lesson: {e}")
+
+        # Lưu cache kết quả phân tích
+        result_payload = {
+            "why": data.get("why", ""),
+            "verdict": data.get("verdict", verdict),
+            "quality_score": quality,
+            "lesson": lesson_text,
+            "lesson_tags": data.get("lesson_tags", []),
+            "lesson_polarity": data.get("lesson_polarity", ""),
+        }
+        try:
+            import json as _json
+            FuturesTradeAnalysis.objects.create(
+                position=pos,
+                analysis_text=_json.dumps(result_payload, ensure_ascii=False),
+                quality_score=quality,
+            )
+        except Exception as e:
+            logger.warning(f"Could not cache futures analysis: {e}")
+
+        return Response({
+            "cached": False,
+            "position_id": position_id,
+            "symbol": pos.asset.symbol,
+            "direction": pos.direction,
+            **result_payload,
+            "lesson_saved": lesson_saved,
+        })
 
 
 class FuturesCloseAllView(APIView):

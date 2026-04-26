@@ -73,8 +73,75 @@ class CryptoOrder(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="MATCHED")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Lưu reasoning + PnL để Qwen analyze sau
+    bot_reasoning = models.TextField(blank=True, default="")
+    cost_basis_usd = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True)
+    pnl_usd = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def pnl_pct(self):
+        if self.side == "SELL" and self.cost_basis_usd and self.cost_basis_usd > 0:
+            return float((self.price_usd - self.cost_basis_usd) / self.cost_basis_usd * 100)
+        return None
+
+
+class BotRoundLog(models.Model):
+    """Lưu analysis text của LLM mỗi vòng chạy — không cần gọi thêm LLM."""
+    bot_username = models.CharField(max_length=50)
+    analysis_text = models.TextField(blank=True, default="")
+    decisions_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class TradeAnalysis(models.Model):
+    """Kết quả Qwen 3.5 phân tích sâu một lệnh cụ thể — lưu cache để không gọi lại."""
+    order = models.OneToOneField(CryptoOrder, on_delete=models.CASCADE, related_name="analysis")
+    analysis_text = models.TextField()
+    quality_score = models.FloatField(default=0.0)  # 0.0 – 1.0
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class FuturesTradeAnalysis(models.Model):
+    """Cache kết quả phân tích Qwen cho 1 FuturesPosition — tránh gọi LLM lại."""
+    position = models.OneToOneField("FuturesPosition", on_delete=models.CASCADE, related_name="analysis")
+    analysis_text = models.TextField()
+    quality_score = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class LearnedLesson(models.Model):
+    """Bài học rút ra từ trade tốt/xấu, được inject vào context các bot sau."""
+    POLARITY_CHOICES = [("GOOD", "Good"), ("WARNING", "Warning")]
+
+    source_order = models.ForeignKey(
+        CryptoOrder, on_delete=models.SET_NULL, null=True, blank=True, related_name="lessons"
+    )
+    source_bot = models.CharField(max_length=50)
+    lesson_text = models.TextField()
+    polarity = models.CharField(max_length=10, choices=POLARITY_CHOICES, default="GOOD")
+    tags = models.CharField(max_length=200, blank=True, default="universal")
+    quality_score = models.FloatField(default=0.5)
+    pnl_at_extraction = models.FloatField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-quality_score", "-created_at"]
+
+    def tag_list(self):
+        return [t.strip() for t in self.tags.split(",") if t.strip()]
 
 
 # ── FUTURES / LONG-SHORT ──────────────────────────────────────────────────────
@@ -107,6 +174,7 @@ class FuturesPosition(models.Model):
     leverage = models.IntegerField(default=1)
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="OPEN")
     realized_pnl = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    bot_reasoning = models.TextField(blank=True, default="")
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
 

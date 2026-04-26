@@ -17,7 +17,7 @@ class Command(BaseCommand):
         from crypto.bots.definitions import CRYPTO_BOTS
         from crypto.bots.market_context import build_crypto_context, get_crypto_portfolio_state
         from crypto.bots.executor import execute_crypto_decisions
-        from crypto.models import CryptoWallet
+        from crypto.models import CryptoWallet, BotRoundLog
         from bots.ollama_client import ask_llm
 
         target = options.get("bot")
@@ -37,7 +37,7 @@ class Command(BaseCommand):
                 continue
 
             portfolio = get_crypto_portfolio_state(user)
-            context = build_crypto_context(portfolio, wallet.balance_usd)
+            context = build_crypto_context(portfolio, wallet.balance_usd, bot_username=bot_def["username"])
 
             result = ask_llm(
                 model=bot_def["model"],
@@ -51,11 +51,22 @@ class Command(BaseCommand):
                 continue
 
             decisions = result.get("decisions", [])
-            analysis = result.get("analysis", "").encode("ascii", errors="replace").decode("ascii")
-            self.stdout.write(f"  {len(decisions)} quyet dinh | {analysis[:80]}")
+            analysis = result.get("analysis", "")
+            analysis_ascii = analysis.encode("ascii", errors="replace").decode("ascii")
+            self.stdout.write(f"  {len(decisions)} quyet dinh | {analysis_ascii[:80]}")
+
+            # Lưu analysis của vòng này — không tốn thêm LLM call
+            BotRoundLog.objects.create(
+                bot_username=bot_def["username"],
+                analysis_text=analysis,
+                decisions_count=len(decisions),
+            )
 
             if decisions:
-                logs = execute_crypto_decisions(user, decisions, portfolio)
+                logs = execute_crypto_decisions(
+                    user, decisions, portfolio,
+                    bot_reasoning=analysis[:300],  # tóm tắt reasoning vào mỗi order
+                )
                 for log in logs:
                     self.stdout.write(log.encode("ascii", errors="replace").decode("ascii"))
             else:

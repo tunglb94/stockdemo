@@ -1,5 +1,22 @@
 from decimal import Decimal
 
+# Map bot username → strategy tags dùng để filter lessons phù hợp
+_BOT_TAGS: dict[str, list[str]] = {
+    "crypto_alpha":   ["momentum"],
+    "crypto_beta":    ["value"],
+    "crypto_gamma":   ["altcoin"],
+    "crypto_delta":   ["contrarian"],
+    "crypto_epsilon": [],           # balanced → nhận tất cả lessons (không filter tag)
+    "crypto_zeta":    ["macro"],
+    "crypto_eta":     ["scalper", "timing"],
+    "crypto_theta":   ["commodity"],
+    "crypto_iota":    ["meme"],
+    "crypto_lambda":  ["quant"],
+    "crypto_mu":      ["scalper"],
+}
+
+MAX_LESSONS = 5
+
 
 def get_crypto_portfolio_state(user) -> dict:
     from crypto.models import CryptoPortfolio
@@ -19,7 +36,42 @@ def get_crypto_portfolio_state(user) -> dict:
     return portfolio
 
 
-def build_crypto_context(portfolio: dict, balance_usd: Decimal) -> str:
+def get_relevant_lessons(bot_username: str) -> str:
+    """
+    Query LearnedLesson phù hợp với bot, format thành text để inject vào context.
+    Trả về "" nếu chưa có lesson nào.
+    """
+    from crypto.models import LearnedLesson
+    from django.db.models import Q
+
+    strategy_tags = _BOT_TAGS.get(bot_username, [])
+
+    # Epsilon (balanced) hoặc bot không rõ tag → lấy tất cả top lessons
+    if not strategy_tags:
+        qs = LearnedLesson.objects.filter(is_active=True)
+    else:
+        # Lấy: universal + lessons có tag trùng với chiến lược bot
+        tag_filter = Q(tags__icontains="universal")
+        for tag in strategy_tags:
+            tag_filter |= Q(tags__icontains=tag)
+        qs = LearnedLesson.objects.filter(is_active=True).filter(tag_filter)
+
+    lessons = list(qs.order_by("-quality_score", "-created_at")[:MAX_LESSONS])
+
+    if not lessons:
+        return ""
+
+    lines = ["", "=== BAI HOC TU LICH SU TRADE (hoc tu kinh nghiem cac bot khac) ==="]
+    for lesson in lessons:
+        pnl_info = f" | PnL: {lesson.pnl_at_extraction:+.1f}%" if lesson.pnl_at_extraction is not None else ""
+        prefix = "+" if lesson.polarity == "GOOD" else "!"
+        lines.append(f"  [{prefix}] [{lesson.source_bot}{pnl_info}] {lesson.lesson_text}")
+
+    lines.append("(Ap dung nhung bai hoc tren vao quyet dinh hom nay neu phu hop)")
+    return "\n".join(lines)
+
+
+def build_crypto_context(portfolio: dict, balance_usd: Decimal, bot_username: str = "") -> str:
     from crypto.models import CryptoAsset
 
     lines = [
@@ -56,18 +108,15 @@ def build_crypto_context(portfolio: dict, balance_usd: Decimal) -> str:
         except Exception:
             pass
 
-    # Commodities nổi bật lên đầu để LLM chú ý
     lines.append("--- HANG HOA (COMMODITY) — co the mua/ban truc tiep ---")
     lines.append("  [Kim loai quy] XAU=Vang | XAG=Bac | XPT=Platinum | COPPER=Dong")
     lines.append("  [Nang luong]   WTI=Dau Tho My | BRENT=Dau Tho QT | NATGAS=Khi Tu Nhien")
     lines.append("  [Nong san]     WHEAT=Lua Mi | CORN=Ngo | COFFEE=Ca Phe | SUGAR=Duong | COTTON=Bong")
     lines += commodity_lines
 
-    # Crypto
     lines += ["", "--- CRYPTO (60 ma) ---"]
     lines += crypto_lines
 
-    # Sentiment
     if btc_chg > 2 and eth_chg > 1:
         sentiment = "BULLISH"
     elif btc_chg < -2 and eth_chg < -1:
@@ -85,7 +134,6 @@ def build_crypto_context(portfolio: dict, balance_usd: Decimal) -> str:
     if losers:
         lines.append("Top giam manh: " + ", ".join(f"{s}({c:.1f}%)" for s, c in sorted(losers, key=lambda x: x[1])[:5]))
 
-    # Portfolio
     lines += ["", "--- DANH MUC CUA BAN ---"]
     if portfolio:
         total_value = Decimal("0")
@@ -102,13 +150,19 @@ def build_crypto_context(portfolio: dict, balance_usd: Decimal) -> str:
     else:
         lines.append("  Khong co tai san, toan bo la USD.")
 
-    # News context
+    # News
     try:
         from crypto.services.news_feed import get_news_context
         lines += ["", "=" * 50]
         lines.append(get_news_context(limit=12))
     except Exception:
         pass
+
+    # Lessons từ lịch sử trade — inject ngay trước câu lệnh cuối để LLM đọc xong rồi quyết định
+    if bot_username:
+        lesson_block = get_relevant_lessons(bot_username)
+        if lesson_block:
+            lines.append(lesson_block)
 
     lines.append("\nHay dua ra quyet dinh giao dich cho vong nay.")
     return "\n".join(lines)

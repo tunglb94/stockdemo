@@ -37,10 +37,6 @@ start "StockSim Backend" cmd /k "cd /d %~dp0backend && call venv\Scripts\activat
 REM Cho backend khoi dong
 timeout /t 3 /nobreak >nul
 
-REM === START MARKET FEED + BOT SCHEDULER ===
-echo [3/4] Khoi dong Market Feed + AI Bot Scheduler...
-start "StockSim Market Feed" cmd /k "cd /d %~dp0backend && call venv\Scripts\activate.bat && python manage.py run_market_feed"
-
 REM === START FRONTEND ===
 echo [4/4] Khoi dong Frontend (port 3000)...
 start "StockSim Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"

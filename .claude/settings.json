@@ -9,7 +9,15 @@
       "Bash(python -c \"import django, os; os.environ['DJANGO_SETTINGS_MODULE']='config.settings.development'; django.setup\\(\\); from django.contrib.auth import get_user_model; User=get_user_model\\(\\); print\\(User.objects.filter\\(username__startswith='futures'\\).count\\(\\)\\)\")",
       "Bash(./venv/Scripts/python.exe -c ' *)",
       "Bash(grep -v \"^$\")",
-      "Bash(python reset_all_bots.py)"
+      "Bash(python reset_all_bots.py)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000/crypto)",
+      "Bash(curl -s http://localhost:11434/)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(m['name'], m['size']//1024//1024//1024, 'GB'\\) for m in d.get\\('models',[]\\)]\")",
+      "Read(//i/i/**)",
+      "Bash(venv/Scripts/python.exe manage.py makemigrations crypto --name add_futures_bot_reasoning)",
+      "Bash(venv/Scripts/python.exe manage.py migrate crypto)"
     ]
   }
 }

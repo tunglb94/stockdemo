@@ -47,7 +47,38 @@ def leverage_hint(score: float) -> str:
     return "skip"
 
 
-def build_futures_context(positions: dict, balance_usd: Decimal) -> str:
+def get_futures_lessons(bot_username: str) -> str:
+    """Lấy lessons liên quan đến futures trading để inject vào context của phi4."""
+    try:
+        from crypto.models import LearnedLesson
+        from django.db.models import Q
+
+        # Futures-relevant tags
+        FUTURES_TAGS = ["universal", "momentum", "timing", "macro", "scalper", "contrarian"]
+
+        tag_filter = Q()
+        for tag in FUTURES_TAGS:
+            tag_filter |= Q(tags__icontains=tag)
+
+        lessons = list(
+            LearnedLesson.objects.filter(is_active=True).filter(tag_filter)
+            .order_by("-quality_score", "-created_at")[:8]
+        )
+
+        if not lessons:
+            return ""
+
+        lines = ["", "--- LESSONS FROM PAST TRADES (apply if relevant) ---"]
+        for lesson in lessons:
+            pnl = f" | PnL: {lesson.pnl_at_extraction:+.1f}%" if lesson.pnl_at_extraction is not None else ""
+            prefix = "+" if lesson.polarity == "GOOD" else "!"
+            lines.append(f"  [{prefix}] [{lesson.source_bot}{pnl}] {lesson.lesson_text}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def build_futures_context(positions: dict, balance_usd: Decimal, bot_username: str = "") -> str:
     from crypto.models import CryptoAsset
 
     session_name, session_note = get_session()
@@ -199,6 +230,12 @@ def build_futures_context(positions: dict, balance_usd: Decimal) -> str:
             lines += ["", "--- MARKET NEWS (factor into decisions) ---", news]
     except Exception:
         pass
+
+    # ── Learned lessons ───────────────────────────────────────────────────────
+    if bot_username:
+        lesson_block = get_futures_lessons(bot_username)
+        if lesson_block:
+            lines.append(lesson_block)
 
     lines += [
         "",

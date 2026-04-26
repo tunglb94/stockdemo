@@ -1,13 +1,30 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import apiClient from "@/services/apiClient";
-import CryptoAssetRow, { Asset } from "@/components/market/CryptoAssetRow";
+import CryptoAssetRow from "@/components/market/CryptoAssetRow";
+import type { Asset } from "@/components/market/CryptoAssetRow";
+
+interface BotOrder {
+  id: number;
+  symbol: string; side: string; quantity: number; price: number;
+  total: number; created_at: string;
+  pnl_usd: number | null; pnl_pct: number | null;
+  has_analysis: boolean;
+}
 interface CryptoBot {
   username: string; display_name: string; model: string;
   total_value_usd: number; cash_usd: number; asset_value_usd: number;
   pnl_usd: number; pnl_pct: number; matched_orders: number;
   holdings: { symbol: string; quantity: number; avg_cost: number; current_price: number; value_usd: number; pnl_pct: number }[];
-  recent_orders: { symbol: string; side: string; quantity: number; price: number; total: number; created_at: string }[];
+  recent_orders: BotOrder[];
+}
+interface TradeAnalysisResult {
+  cached: boolean;
+  order_id: number;
+  symbol: string; side: string;
+  why: string; verdict: string; quality_score: number;
+  lesson: string | null; lesson_tags: string[]; lesson_polarity: string;
+  lesson_saved: boolean;
 }
 interface FuturesStats {
   total_trades: number; closed_trades: number; win_rate: number;
@@ -27,7 +44,7 @@ interface FuturesBot {
   open_positions: OpenPosition[];
   equity_curve: { t: string; v: number }[];
   stats: FuturesStats;
-  recent_closed: { symbol: string; direction: string; entry: number; exit: number; pnl: number; margin_usd: number; leverage: number; status: string; opened_at: string; closed_at: string }[];
+  recent_closed: { id: number; symbol: string; direction: string; entry: number; exit: number; pnl: number; margin_usd: number; leverage: number; status: string; opened_at: string; closed_at: string; has_analysis: boolean }[];
 }
 
 const MEDALS = ["🥇", "🥈", "🥉", "4.", "5.", "6.", "7.", "8.", "9.", "10."];
@@ -37,6 +54,59 @@ const fmtMcap = (n: number) => n >= 1e12 ? `$${(n/1e12).toFixed(2)}T` : n >= 1e9
 const fmtUsd = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const clr = (v: number) => v >= 0 ? "text-price-up" : "text-price-down";
 const sign = (v: number) => v >= 0 ? "+" : "";
+
+// ── Trade Analysis Result ─────────────────────────────────────────────────────
+function AnalysisResult({ r }: { r: TradeAnalysisResult }) {
+  const scoreColor = r.quality_score >= 0.7 ? "text-price-up" : r.quality_score >= 0.4 ? "text-yellow-400" : "text-price-down";
+  const verdictIcon = r.verdict === "Quyết định tốt" ? "✅" : r.verdict === "Quyết định sai" ? "❌" : "⚠️";
+  const scoreBarColor = r.quality_score >= 0.7 ? "bg-price-up" : r.quality_score >= 0.4 ? "bg-yellow-500" : "bg-price-down";
+
+  return (
+    <>
+      {r.cached && (
+        <div className="text-[10px] text-gray-600 flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-gray-600 inline-block" />
+          Kết quả đã lưu từ lần phân tích trước
+        </div>
+      )}
+      <div className="bg-dark-bg rounded-xl p-4 border border-dark-border">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-sm font-bold">{verdictIcon} {r.verdict}</span>
+          <span className={`text-sm font-bold ${scoreColor}`}>
+            Chất lượng: {(r.quality_score * 10).toFixed(1)}/10
+          </span>
+        </div>
+        <div className="h-1.5 bg-dark-border rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${scoreBarColor}`} style={{ width: `${r.quality_score * 100}%` }} />
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Vì sao bot quyết định thế này?</div>
+        <p className="text-sm text-gray-200 leading-relaxed bg-dark-bg rounded-lg p-3 border border-dark-border">{r.why}</p>
+      </div>
+      {r.lesson && (
+        <div className={`rounded-xl p-4 border ${r.lesson_polarity === "GOOD" ? "bg-price-up/10 border-price-up/30" : "bg-orange-950/30 border-orange-700/40"}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xs font-bold">
+              {r.lesson_polarity === "GOOD" ? "💡 Bài học tích cực" : "⚠️ Bài học cảnh báo"}
+            </span>
+            {r.lesson_saved && (
+              <span className="text-[10px] bg-blue-900/50 text-blue-400 border border-blue-700/40 px-1.5 py-0.5 rounded">
+                Đã lưu vào kho kiến thức
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-200 leading-relaxed">{r.lesson}</p>
+          <div className="flex gap-1.5 mt-2 flex-wrap">
+            {r.lesson_tags?.map(tag => (
+              <span key={tag} className="text-[10px] bg-dark-surface border border-dark-border px-2 py-0.5 rounded text-gray-400">#{tag}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 // ── Equity Curve SVG ──────────────────────────────────────────────────────────
 function EquityChart({ data, start = 5000 }: { data: { t: string; v: number }[]; start?: number }) {
@@ -111,6 +181,55 @@ export default function CryptoPage() {
   const [mobileFDetail, setMobileFDetail] = useState(false);
   const [mobileBotDetail, setMobileBotDetail] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
+  const [analyzeModal, setAnalyzeModal] = useState<{
+    order: BotOrder;
+    loading: boolean;
+    result: TradeAnalysisResult | null;
+    error: string | null;
+  } | null>(null);
+
+  const [futuresAnalyzeModal, setFuturesAnalyzeModal] = useState<{
+    pos: FuturesBot["recent_closed"][number];
+    loading: boolean;
+    result: TradeAnalysisResult | null;
+    error: string | null;
+  } | null>(null);
+
+  async function analyzeFuturesTrade(pos: FuturesBot["recent_closed"][number]) {
+    setFuturesAnalyzeModal({ pos, loading: true, result: null, error: null });
+    try {
+      const r = await apiClient.post(`/crypto/futures/analyze-trade/${pos.id}/`, {}, { timeout: 120000 });
+      setFuturesAnalyzeModal(prev => prev ? { ...prev, loading: false, result: r.data } : null);
+      // Cập nhật has_analysis trong danh sách
+      setFuturesBots(prev => prev.map(bot => ({
+        ...bot,
+        recent_closed: bot.recent_closed.map(p =>
+          p.id === pos.id ? { ...p, has_analysis: true } : p
+        ),
+      })));
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Không thể kết nối. Kiểm tra Ollama đang chạy.";
+      setFuturesAnalyzeModal(prev => prev ? { ...prev, loading: false, error: msg } : null);
+    }
+  }
+
+  async function analyzeOrder(order: BotOrder) {
+    setAnalyzeModal({ order, loading: true, result: null, error: null });
+    try {
+      const r = await apiClient.post(`/crypto/bots/analyze-trade/${order.id}/`, {}, { timeout: 120000 });
+      setAnalyzeModal(prev => prev ? { ...prev, loading: false, result: r.data } : null);
+      // Cập nhật has_analysis trong danh sách
+      setBots(prev => prev.map(bot => ({
+        ...bot,
+        recent_orders: bot.recent_orders.map(o =>
+          o.id === order.id ? { ...o, has_analysis: true } : o
+        ),
+      })));
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Không thể kết nối. Kiểm tra Ollama đang chạy.";
+      setAnalyzeModal(prev => prev ? { ...prev, loading: false, error: msg } : null);
+    }
+  }
 
   async function handleCloseAll() {
     if (!confirm("⚠️ Đóng TẤT CẢ lệnh đang mở của mọi bot?\nDùng khi tắt server để tránh mất kiểm soát vị thế.")) return;
@@ -373,14 +492,34 @@ export default function CryptoPage() {
                 )}
                 {detail.recent_orders.length > 0 && (
                   <div>
-                    <div className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wider">Lệnh gần đây</div>
-                    <div className="space-y-1.5">{detail.recent_orders.map((o, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs bg-dark-surface rounded-lg px-3 py-2 border border-dark-border">
-                        <span className={`font-bold px-2 py-0.5 rounded text-[10px] ${o.side === "BUY" ? "bg-price-up/20 text-price-up" : "bg-price-down/20 text-price-down"}`}>{o.side}</span>
-                        <span className="font-bold">{o.symbol}</span>
-                        <span className="text-gray-400">{fmtQty(o.quantity)} @ ${fmtPrice(o.price)}</span>
-                        <span className="text-gray-500 font-semibold">= ${fmtUsd(o.total)}</span>
-                        <span className="ml-auto text-gray-600">{o.created_at}</span>
+                    <div className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wider">
+                      Lệnh gần đây
+                      <span className="ml-2 text-gray-600 font-normal normal-case">Bấm 🔍 để Qwen 3.5 phân tích</span>
+                    </div>
+                    <div className="space-y-1.5">{detail.recent_orders.map((o) => (
+                      <div key={o.id} className="flex items-center gap-2 text-xs bg-dark-surface rounded-lg px-3 py-2 border border-dark-border">
+                        <span className={`font-bold px-2 py-0.5 rounded text-[10px] shrink-0 ${o.side === "BUY" ? "bg-price-up/20 text-price-up" : "bg-price-down/20 text-price-down"}`}>{o.side}</span>
+                        <span className="font-bold shrink-0">{o.symbol}</span>
+                        <span className="text-gray-400 hidden sm:inline">{fmtQty(o.quantity)} @ ${fmtPrice(o.price)}</span>
+                        <span className="text-gray-500 font-semibold shrink-0">= ${fmtUsd(o.total)}</span>
+                        {o.side === "SELL" && o.pnl_pct !== null && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                            Math.abs(o.pnl_pct) < 0.01 ? "bg-gray-700 text-gray-400" :
+                            o.pnl_pct > 0 ? "bg-price-up/20 text-price-up" : "bg-price-down/20 text-price-down"
+                          }`}>
+                            {Math.abs(o.pnl_pct) < 0.01 ? "Hòa" : `${o.pnl_pct > 0 ? "+" : ""}${o.pnl_pct.toFixed(1)}%`}
+                          </span>
+                        )}
+                        <span className="ml-auto text-gray-600 shrink-0">{o.created_at}</span>
+                        <button
+                          onClick={() => analyzeOrder(o)}
+                          title={o.has_analysis ? "Xem lại phân tích" : "Phân tích lệnh này bằng Qwen 3.5"}
+                          className={`shrink-0 text-sm px-1.5 py-0.5 rounded transition hover:scale-110 ${
+                            o.has_analysis ? "text-yellow-400 hover:text-yellow-300" : "text-gray-500 hover:text-blue-400"
+                          }`}
+                        >
+                          {o.has_analysis ? "✨" : "🔍"}
+                        </button>
                       </div>
                     ))}</div>
                   </div>
@@ -700,13 +839,18 @@ export default function CryptoPage() {
                                   <span className={`font-bold ml-auto shrink-0 ${clr(p.pnl)}`}>{sign(p.pnl)}${fmtUsd(Math.abs(p.pnl))}</span>
                                   {p.status === "LIQUIDATED" && <span className="text-red-400 font-bold text-[10px] shrink-0">LIQ</span>}
                                 </div>
-                                {/* Row 2: timestamps + cumulative */}
+                                {/* Row 2: timestamps + cumulative + analyze */}
                                 <div className="flex items-center gap-2 text-[10px] text-gray-600">
                                   <span>Mở: <span className="text-gray-400">{p.opened_at}</span></span>
                                   <span>→</span>
                                   <span>Đóng: <span className="text-gray-400">{p.closed_at}</span></span>
-                                  <span className="ml-auto">
+                                  <span className="ml-auto flex items-center gap-2">
                                     Σ <span className={clr(cumPnl)}>{sign(cumPnl)}${fmtUsd(Math.abs(cumPnl))}</span>
+                                    <button
+                                      onClick={() => analyzeFuturesTrade(p)}
+                                      title={p.has_analysis ? "Xem lại phân tích" : "Phân tích lệnh này"}
+                                      className={`text-sm px-1.5 py-0.5 rounded transition hover:scale-110 ${p.has_analysis ? "text-yellow-400 hover:text-yellow-300" : "text-gray-500 hover:text-blue-400"}`}
+                                    >{p.has_analysis ? "✨" : "🔍"}</button>
                                   </span>
                                 </div>
                               </div>
@@ -722,6 +866,100 @@ export default function CryptoPage() {
           </div>
         )}
       </div>
+
+      {/* ── Trade Analysis Modal ── */}
+      {analyzeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 md:p-6" onClick={() => !analyzeModal.loading && setAnalyzeModal(null)}>
+          <div className="bg-dark-surface border border-dark-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-border">
+              <div>
+                <div className="font-bold text-base flex items-center gap-2">
+                  🔍 Phân tích lệnh
+                  <span className={`font-bold px-2 py-0.5 rounded text-xs ${analyzeModal.order.side === "BUY" ? "bg-price-up/20 text-price-up" : "bg-price-down/20 text-price-down"}`}>
+                    {analyzeModal.order.side}
+                  </span>
+                  <span className="font-bold">{analyzeModal.order.symbol}</span>
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  {fmtQty(analyzeModal.order.quantity)} @ ${fmtPrice(analyzeModal.order.price)} · {analyzeModal.order.created_at}
+                </div>
+              </div>
+              {!analyzeModal.loading && (
+                <button onClick={() => setAnalyzeModal(null)} className="text-gray-500 hover:text-white text-xl leading-none transition shrink-0 ml-3">×</button>
+              )}
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {/* Loading */}
+              {analyzeModal.loading && (
+                <div className="flex flex-col items-center justify-center py-10 gap-4">
+                  <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-sm text-gray-400 text-center">
+                    Qwen 3.5 đang phân tích...<br />
+                    <span className="text-xs text-gray-600">Có thể mất 30–60 giây</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {analyzeModal.error && (
+                <div className="bg-red-950/40 border border-red-800/50 rounded-lg px-4 py-3 text-sm text-red-400">
+                  ❌ {analyzeModal.error}
+                </div>
+              )}
+
+              {/* Result */}
+              {analyzeModal.result && <AnalysisResult r={analyzeModal.result} />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Futures Trade Analysis Modal ── */}
+      {futuresAnalyzeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 md:p-6" onClick={() => !futuresAnalyzeModal.loading && setFuturesAnalyzeModal(null)}>
+          <div className="bg-dark-surface border border-dark-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-border">
+              <div>
+                <div className="font-bold text-base flex items-center gap-2">
+                  🔍 Phân tích lệnh Futures
+                  <span className={`font-bold px-2 py-0.5 rounded text-xs ${futuresAnalyzeModal.pos.direction === "LONG" ? "bg-price-up/20 text-price-up" : "bg-price-down/20 text-price-down"}`}>
+                    {futuresAnalyzeModal.pos.direction}
+                  </span>
+                  <span className="font-bold">{futuresAnalyzeModal.pos.symbol}</span>
+                  <span className="text-xs text-gray-500">×{futuresAnalyzeModal.pos.leverage}</span>
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  ${futuresAnalyzeModal.pos.entry.toFixed(4)} → ${futuresAnalyzeModal.pos.exit.toFixed(4)} ·{" "}
+                  <span className={clr(futuresAnalyzeModal.pos.pnl)}>{sign(futuresAnalyzeModal.pos.pnl)}${fmtUsd(Math.abs(futuresAnalyzeModal.pos.pnl))}</span>
+                </div>
+              </div>
+              {!futuresAnalyzeModal.loading && (
+                <button onClick={() => setFuturesAnalyzeModal(null)} className="text-gray-500 hover:text-white text-xl leading-none transition shrink-0 ml-3">×</button>
+              )}
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              {futuresAnalyzeModal.loading && (
+                <div className="flex flex-col items-center justify-center py-10 gap-4">
+                  <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-sm text-gray-400 text-center">
+                    Qwen đang phân tích...<br />
+                    <span className="text-xs text-gray-600">Có thể mất 30–60 giây</span>
+                  </div>
+                </div>
+              )}
+              {futuresAnalyzeModal.error && (
+                <div className="bg-red-950/40 border border-red-800/50 rounded-lg px-4 py-3 text-sm text-red-400">
+                  ❌ {futuresAnalyzeModal.error}
+                </div>
+              )}
+              {futuresAnalyzeModal.result && <AnalysisResult r={futuresAnalyzeModal.result} />}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
