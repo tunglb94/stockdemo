@@ -281,7 +281,11 @@ export default function BotsPage() {
               </div>
 
               {/* Holdings */}
-              {detail.holdings.length > 0 && (
+              {detail.holdings.length > 0 && (() => {
+                const totalPnl = detail.holdings.reduce((sum, h) => sum + (h.current_price - h.avg_cost) * h.quantity, 0)
+                const totalCost = detail.holdings.reduce((sum, h) => sum + h.avg_cost * h.quantity, 0)
+                const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
+                return (
                 <div className="bg-dark-surface border border-dark-border rounded-lg p-3">
                   <h3 className="text-xs font-semibold text-gray-400 mb-2">DANH MỤC ĐANG GIỮ</h3>
                   <table className="w-full text-xs">
@@ -290,26 +294,45 @@ export default function BotsPage() {
                         <th className="text-left pb-1">Mã</th>
                         <th className="text-right pb-1">SL</th>
                         <th className="text-right pb-1">Giá vốn</th>
-                        <th className="text-right pb-1">Giá hiện tại</th>
-                        <th className="text-right pb-1">P&L%</th>
+                        <th className="text-right pb-1">Giá TT</th>
+                        <th className="text-right pb-1">Lời/Lỗ (K)</th>
+                        <th className="text-right pb-1">%</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {detail.holdings.map(h => (
+                      {detail.holdings.map(h => {
+                        const pnlAmount = (h.current_price - h.avg_cost) * h.quantity
+                        return (
                         <tr key={h.symbol} className="border-b border-dark-border/30">
                           <td className="py-1 font-bold text-white">{h.symbol}</td>
                           <td className="py-1 text-right text-gray-400">{h.quantity}</td>
-                          <td className="py-1 text-right text-gray-400">{(h.avg_cost/1000).toFixed(2)}</td>
-                          <td className="py-1 text-right text-gray-400">{(h.current_price/1000).toFixed(2)}</td>
-                          <td className={`py-1 text-right font-semibold ${h.pnl_pct >= 0 ? "text-price-up" : "text-price-down"}`}>
-                            {h.pnl_pct >= 0 ? "+" : ""}{h.pnl_pct.toFixed(2)}%
+                          <td className="py-1 text-right text-gray-400">{(h.avg_cost/1000).toFixed(1)}</td>
+                          <td className="py-1 text-right text-gray-400">{(h.current_price/1000).toFixed(1)}</td>
+                          <td className={`py-1 text-right font-semibold ${pnlAmount >= 0 ? "text-price-up" : "text-price-down"}`}>
+                            {pnlAmount >= 0 ? "+" : ""}{(pnlAmount/1000).toFixed(0)}
+                          </td>
+                          <td className={`py-1 text-right ${h.pnl_pct >= 0 ? "text-price-up" : "text-price-down"}`}>
+                            {h.pnl_pct >= 0 ? "+" : ""}{h.pnl_pct.toFixed(1)}%
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t border-dark-border">
+                        <td colSpan={4} className="py-1.5 text-gray-400 font-semibold">Tổng lời/lỗ</td>
+                        <td className={`py-1.5 text-right font-bold ${totalPnl >= 0 ? "text-price-up" : "text-price-down"}`}>
+                          {totalPnl >= 0 ? "+" : ""}{(totalPnl/1000).toFixed(0)}K
+                        </td>
+                        <td className={`py-1.5 text-right font-bold ${totalPnlPct >= 0 ? "text-price-up" : "text-price-down"}`}>
+                          {totalPnlPct >= 0 ? "+" : ""}{totalPnlPct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
-              )}
+                )
+              })()}
 
               {/* Recent orders */}
               {detail.recent_orders.length > 0 && (

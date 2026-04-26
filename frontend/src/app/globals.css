@@ -14,19 +14,34 @@ body {
   font-family: 'Inter', 'Segoe UI', sans-serif;
 }
 
-/* Hiệu ứng nháy giá */
+/* VN Stock board row flash */
 @keyframes blink-up {
   0%, 100% { background-color: transparent; }
   50% { background-color: rgba(0, 176, 80, 0.3); }
 }
-
 @keyframes blink-down {
   0%, 100% { background-color: transparent; }
   50% { background-color: rgba(255, 0, 0, 0.3); }
 }
-
-.blink-up { animation: blink-up 0.5s ease; }
+.blink-up   { animation: blink-up 0.5s ease; }
 .blink-down { animation: blink-down 0.5s ease; }
+
+/* Crypto ticker — cell-level flash */
+@keyframes tick-up {
+  0%   { background-color: rgba(0, 200, 100, 0.55); }
+  100% { background-color: transparent; }
+}
+@keyframes tick-down {
+  0%   { background-color: rgba(230, 40, 40, 0.50); }
+  100% { background-color: transparent; }
+}
+@keyframes tick-neutral {
+  0%   { background-color: rgba(100, 100, 100, 0.35); }
+  100% { background-color: transparent; }
+}
+.tick-up      { animation: tick-up      0.9s ease-out forwards; border-radius: 3px; }
+.tick-down    { animation: tick-down    0.9s ease-out forwards; border-radius: 3px; }
+.tick-neutral { animation: tick-neutral 0.6s ease-out forwards; border-radius: 3px; }
 
 /* Scrollbar tối */
 ::-webkit-scrollbar { width: 6px; }

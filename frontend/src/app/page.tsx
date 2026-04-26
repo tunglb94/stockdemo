@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 
 export default function LandingPage() {
+  redirect("/dashboard");
   return (
     <div className="min-h-screen bg-dark-bg flex flex-col items-center justify-center px-4">
       <div className="max-w-3xl text-center">

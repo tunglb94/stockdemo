@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/python -c ' *)",
+      "Bash(xargs grep *)",
+      "Bash(xargs ls *)",
+      "Read(//mnt/i/stock/venv/**)",
+      "Read(//i/stock/backend/**)",
+      "Bash(python -c \"import django, os; os.environ['DJANGO_SETTINGS_MODULE']='config.settings.development'; django.setup\\(\\); from django.contrib.auth import get_user_model; User=get_user_model\\(\\); print\\(User.objects.filter\\(username__startswith='futures'\\).count\\(\\)\\)\")",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(python reset_all_bots.py)"
+    ]
+  }
+}

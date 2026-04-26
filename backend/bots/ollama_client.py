@@ -1,5 +1,5 @@
 """
-Gọi Ollama API local để lấy quyết định trading từ LLM.
+Ollama API client for trading bots.
 """
 import json
 import logging
@@ -8,71 +8,93 @@ import requests
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-TIMEOUT_BY_MODEL = {
-    "gemma3:27b":          300,
-    "qwen3:30b-a3b":       360,
-    "nemotron-3-nano:30b": 360,
-    "gemma3:12b":          240,
-    "mistral-nemo:12b":    240,
-    "hermes3":             240,
-    "phi4:14b":            240,
-    "qwen2.5:7b":          120,
-}
-TIMEOUT = 360
 
-# num_ctx per model — increase for models getting empty responses (context overflow)
-NUM_CTX_BY_MODEL = {
-    "gemma3:27b":           8192,  # 17GB weights — keep ctx small to fit in 16GB VRAM
-    "gemma3:12b":          16384,  # 8GB weights + 3GB KV = ~11GB — safe
-    "phi4:14b":            16384,  # 9GB weights + 3GB KV = ~12GB — safe
-    "mistral-nemo:12b":    16384,
-    "nemotron-3-nano:30b":  8192,  # 24GB — heavy CPU offload, keep ctx minimal
-    "qwen3:30b-a3b":        8192,  # 18GB MoE, keep ctx small
+# Per-model HTTP timeout (seconds)
+TIMEOUT_BY_MODEL = {
+    "phi4:14b":               120,
+    "qwen2.5:14b":            120,
+    "deepseek-coder-v2:16b":  120,
+    "deepseek-v2:16b":        120,
+    "qwen3.5:9b":              90,
+    # legacy
+    "gemma3:12b":             120,
+    "mistral-nemo:12b":       120,
+    "hermes3":                120,
+    "qwen3:8b":                90,
+}
+TIMEOUT_DEFAULT = 150
+
+# num_ctx defaults — only used when caller doesn't override
+# Futures bots pass num_ctx=4096 explicitly (context ~2000 tokens, no need for 16k)
+NUM_CTX_DEFAULT = {
+    "phi4:14b":              16384,   # VN stock bots use long prompts
+    "qwen2.5:14b":           16384,
+    "deepseek-coder-v2:16b": 16384,
+    "deepseek-v2:16b":       16384,
+    "qwen3.5:9b":            16384,
+    # legacy
+    "gemma3:12b":            16384,
+    "mistral-nemo:12b":      16384,
+    "hermes3":               16384,
+    "qwen3:8b":              16384,
 }
 
 # Models that don't support Ollama's native format:"json" mode
-_NO_JSON_FORMAT = {"nemotron-3-nano:30b"}
+_NO_JSON_FORMAT: set = set()
 
 
-def ask_llm(model: str, system_prompt: str, user_message: str, append_json_instruction: bool = True) -> dict | None:
+def ask_llm(
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    append_json_instruction: bool = True,
+    num_ctx: int | None = None,
+    num_predict: int | None = None,
+    temperature: float = 0.3,
+    keep_alive: str = "10m",
+) -> dict | None:
     """
-    Gửi market context tới Ollama, nhận quyết định trading dạng JSON.
-    Trả về dict hoặc None nếu lỗi.
-    append_json_instruction=False cho futures/crypto bots có format riêng trong system_prompt.
-    """
-    # num_predict: limit output tokens. 30b models are verbose and slow.
-    num_predict = 500 if "30b" in model else 1200
+    Call Ollama and get a trading decision as JSON.
 
-    num_ctx = NUM_CTX_BY_MODEL.get(model, 16384)
+    Args:
+        num_ctx:      KV-cache size. Override per caller — futures bots use 4096,
+                      VN-stock bots keep default (16384).
+        num_predict:  Max output tokens. Futures JSON response ≈ 300–400 tokens.
+        keep_alive:   Keep model in VRAM after call. "10m" = 10 minutes.
+                      Avoids reload cost when same model runs multiple bots back-to-back.
+    """
+    resolved_ctx     = num_ctx     if num_ctx     is not None else NUM_CTX_DEFAULT.get(model, 16384)
+    resolved_predict = num_predict if num_predict is not None else (500 if "30b" in model else 1200)
 
     sys_content = system_prompt + (_json_instruction() if append_json_instruction else "")
     payload = {
-        "model": model,
+        "model":      model,
+        "keep_alive": keep_alive,
         "messages": [
             {"role": "system", "content": sys_content},
-            {"role": "user", "content": user_message},
+            {"role": "user",   "content": user_message},
         ],
         "stream": False,
         "options": {
-            "temperature": 0.3,
-            "num_predict": num_predict,
-            "num_ctx": num_ctx,
+            "temperature": temperature,
+            "num_predict": resolved_predict,
+            "num_ctx":     resolved_ctx,
         },
     }
     if model not in _NO_JSON_FORMAT:
-        payload["format"] = "json"  # Ép Ollama trả JSON hợp lệ — fix parse lỗi mọi model
+        payload["format"] = "json"
 
     try:
-        timeout = TIMEOUT_BY_MODEL.get(model, TIMEOUT)
+        timeout = TIMEOUT_BY_MODEL.get(model, TIMEOUT_DEFAULT)
         resp = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
         resp.raise_for_status()
         content = resp.json()["message"]["content"]
         return _parse_json(content)
     except requests.exceptions.ConnectionError:
-        logger.error("Ollama không chạy. Hãy chạy: ollama serve")
+        logger.error("Ollama not running. Start with: ollama serve")
         return None
     except Exception as e:
-        logger.error(f"Lỗi gọi Ollama ({model}): {e}")
+        logger.error(f"Ollama error ({model}): {e}")
         return None
 
 
@@ -99,16 +121,14 @@ Rules:
 
 
 def _parse_json(content: str) -> dict | None:
-    """Tìm và parse JSON từ response LLM (có thể có text thừa xung quanh)."""
+    """Extract and parse JSON from LLM response (may have surrounding text)."""
     content = content.strip()
 
-    # Thử parse thẳng
     try:
         return json.loads(content)
     except json.JSONDecodeError:
         pass
 
-    # Tìm block JSON trong markdown ```json ... ```
     import re
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
     if match:
@@ -117,7 +137,6 @@ def _parse_json(content: str) -> dict | None:
         except json.JSONDecodeError:
             pass
 
-    # Tìm { ... } đầu tiên
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if match:
         try:
@@ -125,5 +144,5 @@ def _parse_json(content: str) -> dict | None:
         except json.JSONDecodeError:
             pass
 
-    logger.warning(f"Không parse được JSON từ LLM: {content[:200]}")
+    logger.warning(f"Cannot parse JSON from LLM: {content[:200]}")
     return None

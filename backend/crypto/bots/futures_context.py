@@ -1,92 +1,208 @@
+"""
+Futures market context builder.
+Preprocesses raw market data into ranked trading opportunities for the AI.
+Key insight: give the AI conclusions, not raw data — like a trading desk analyst.
+"""
 from decimal import Decimal
+from datetime import datetime, timezone as tz
+
+# Liquidity tier weights — higher = more reliable momentum signal
+TIER_WEIGHT = {
+    "BTC": 1.5, "ETH": 1.4, "SOL": 1.3, "XAU": 1.3, "XAG": 1.2,
+    "BNB": 1.2, "XRP": 1.1, "AVAX": 1.1, "LINK": 1.1, "ATOM": 1.1,
+    "TON": 1.0, "NEAR": 1.0, "OP": 1.0, "ARB": 1.0, "INJ": 1.0,
+    "WTI": 1.1, "BRENT": 1.1, "COPPER": 1.0, "NATGAS": 0.9,
+    "WHEAT": 0.9, "CORN": 0.9, "COFFEE": 0.9,
+}
+DEFAULT_WEIGHT   = 0.85
+MIN_MOVE_FOR_OPP = 2.5   # minimum 24h % move to be listed as opportunity
+
+
+def get_session() -> tuple:
+    h = datetime.now(tz.utc).hour
+    if 0 <= h < 8:
+        return "ASIA (00–08 UTC)", "low volume, ranging expected — prefer tighter leverage (8–12x)"
+    elif 8 <= h < 13:
+        return "LONDON (08–13 UTC)", "medium volume, liquidity sweeps common at open — wait for confirmation"
+    else:
+        return "US (13–22 UTC)", "highest volume, strongest trends — breakouts more reliable, use full leverage"
+
+
+def portfolio_heat(positions: dict, balance_usd: Decimal) -> tuple:
+    used = sum(Decimal(str(p["margin_usd"])) for p in positions.values())
+    total = balance_usd + used
+    pct = float(used / total * 100) if total else 0
+    if pct > 65:
+        return pct, "🔴 HOT — >65% deployed. CLOSE positions or HOLD only. No new entries."
+    elif pct > 45:
+        return pct, f"🟡 WARM — {pct:.0f}% deployed. Max 1 new position, margin ≤ $400."
+    else:
+        return pct, f"🟢 COOL — {pct:.0f}% deployed. OK to open 1–2 positions."
+
+
+def leverage_hint(score: float) -> str:
+    if score >= 6.0: return "15–20x"
+    if score >= 4.0: return "12–15x"
+    if score >= 2.5: return "8–12x"
+    return "skip"
 
 
 def build_futures_context(positions: dict, balance_usd: Decimal) -> str:
     from crypto.models import CryptoAsset
 
+    session_name, session_note = get_session()
+    _, heat_label = portfolio_heat(positions, balance_usd)
+
     lines = [
-        "=== FUTURES MARKET — LONG/SHORT (CRYPTO + COMMODITY) ===",
-        f"Balance: ${float(balance_usd):.2f} USD",
+        "=== TRADING DESK BRIEFING ===",
+        f"Session   : {session_name}",
+        f"Note      : {session_note}",
+        f"Heat      : {heat_label}",
+        f"Balance   : ${float(balance_usd):.2f} free  |  {len(positions)}/10 slots used",
         "",
     ]
 
+    # ── Collect market data ───────────────────────────────────────────────────
     btc_chg = eth_chg = 0.0
-    gainers, losers = [], []
-    commodity_lines, crypto_lines = [], []
+    long_opps  = []   # (score, symbol, chg, price)
+    short_opps = []
+    all_rows   = {"COMMODITY": [], "CRYPTO": []}
 
     for asset in CryptoAsset.objects.filter(is_active=True).order_by("rank"):
         try:
-            snap = asset.snapshots.latest("timestamp")
+            snap  = asset.snapshots.latest("timestamp")
             price = float(snap.price_usd)
-            chg = snap.change_24h
-            p_str = f"${price:,.2f}" if price >= 1000 else f"${price:.4f}" if price >= 1 else f"${price:.6f}"
-            row = f"  {asset.symbol:8}: {p_str:>14} ({chg:+.2f}%)"
+            chg   = snap.change_24h
+            w     = TIER_WEIGHT.get(asset.symbol, DEFAULT_WEIGHT)
+            score = abs(chg) * w
 
-            if asset.category == "COMMODITY":
-                commodity_lines.append(row)
-            else:
-                crypto_lines.append(row)
-                if asset.symbol == "BTC":
-                    btc_chg = chg
-                elif asset.symbol == "ETH":
-                    eth_chg = chg
-                if chg >= 5:
-                    gainers.append((asset.symbol, chg))
-                elif chg <= -5:
-                    losers.append((asset.symbol, chg))
+            p_str = (f"${price:,.2f}"  if price >= 1000 else
+                     f"${price:.4f}"   if price >= 1    else
+                     f"${price:.6f}")
+            row = f"  {asset.symbol:8}: {p_str:>14}  {chg:+.2f}%"
+            cat = "COMMODITY" if asset.category == "COMMODITY" else "CRYPTO"
+            all_rows[cat].append(row)
+
+            if asset.symbol == "BTC": btc_chg = chg
+            if asset.symbol == "ETH": eth_chg = chg
+
+            if abs(chg) >= MIN_MOVE_FOR_OPP:
+                if chg < 0: long_opps.append((score, asset.symbol, chg, price))
+                else:       short_opps.append((score, asset.symbol, chg, price))
         except Exception:
             pass
 
-    # Commodities đầu tiên để LLM chú ý
-    lines.append("--- HANG HOA (COMMODITY) — LONG/SHORT duoc ---")
-    lines.append("  XAU=Vang | XAG=Bac | XPT=Platinum | COPPER=Dong")
-    lines.append("  WTI=Dau My | BRENT=Dau QT | NATGAS=Khi gas")
-    lines.append("  WHEAT=Lua mi | CORN=Ngo | COFFEE | SUGAR | COTTON")
-    lines += commodity_lines
-
-    lines += ["", "--- CRYPTO ---"]
-    lines += crypto_lines
-
-    if btc_chg > 2 and eth_chg > 1:
-        sentiment = "BULLISH — xem xet LONG crypto + commodity cyclical (COPPER, OIL)"
-    elif btc_chg < -2 and eth_chg < -1:
-        sentiment = "BEARISH — xem xet SHORT crypto, LONG safe-haven (XAU, XAG)"
+    # ── Market regime ────────────────────────────────────────────────────────
+    if btc_chg > 3 and eth_chg > 2:
+        regime      = "BULL TREND"
+        regime_note = "Strong upward momentum — LONG bias. Avoid counter-trend SHORTs."
+    elif btc_chg < -3 and eth_chg < -2:
+        regime      = "BEAR TREND"
+        regime_note = "Strong downward momentum — SHORT bias. LONG only XAU/safe-haven."
+    elif abs(btc_chg) < 1 and abs(eth_chg) < 1:
+        regime      = "RANGING"
+        regime_note = "Low vol — trade commodities or high-vol alts only. Reduce leverage."
     else:
-        sentiment = "SIDEWAYS — tim co hoi o commodity hoac altcoin bien dong cao"
+        regime      = "MIXED"
+        regime_note = "No clear macro direction — trade individual asset momentum."
 
     lines += [
+        f"--- REGIME: {regime} ---",
+        f"  BTC {btc_chg:+.2f}%  ETH {eth_chg:+.2f}%  |  {regime_note}",
         "",
-        f"--- THI TRUONG: {sentiment} ---",
-        f"  BTC: {btc_chg:+.2f}% | ETH: {eth_chg:+.2f}%",
     ]
 
-    if gainers:
-        lines.append("Overbought (SHORT?): " + ", ".join(f"{s}({c:+.1f}%)" for s, c in sorted(gainers, key=lambda x: -x[1])[:5]))
-    if losers:
-        lines.append("Oversold (LONG?): " + ", ".join(f"{s}({c:.1f}%)" for s, c in sorted(losers, key=lambda x: x[1])[:5]))
+    # ── Ranked opportunities (core intelligence) ──────────────────────────────
+    lines.append("--- RANKED OPPORTUNITIES (pre-scored, act on these) ---")
 
-    # Open positions
-    lines += ["", "--- VI TRI DANG MO ---"]
+    long_opps  = sorted(long_opps,  reverse=True)[:6]
+    short_opps = sorted(short_opps, reverse=True)[:6]
+
+    if long_opps:
+        lines.append("  LONG — oversold (sorted by opportunity score):")
+        for rank, (score, sym, chg, price) in enumerate(long_opps, 1):
+            lev = leverage_hint(score)
+            already = any(p["symbol"] == sym and p["direction"] == "LONG"
+                          for p in positions.values())
+            tag = "  [already open]" if already else ""
+            lines.append(f"    #{rank} {sym:8} {chg:+.2f}%  score={score:.1f}  → {lev}{tag}")
+    else:
+        lines.append("  LONG candidates: none clearing threshold today")
+
+    if short_opps:
+        lines.append("  SHORT — overbought (sorted by opportunity score):")
+        for rank, (score, sym, chg, price) in enumerate(short_opps, 1):
+            lev = leverage_hint(score)
+            already = any(p["symbol"] == sym and p["direction"] == "SHORT"
+                          for p in positions.values())
+            tag = "  [already open]" if already else ""
+            lines.append(f"    #{rank} {sym:8} {chg:+.2f}%  score={score:.1f}  → {lev}{tag}")
+    else:
+        lines.append("  SHORT candidates: none clearing threshold today")
+
+    # ── Price tables — commodities full, crypto top-15 only ─────────────────
+    # Full ranked opportunities already listed above — only reference prices needed here
+    lines += ["", "--- COMMODITIES ---"]
+    lines += all_rows["COMMODITY"]
+    lines += ["", "--- CRYPTO (top 15 by rank) ---"]
+    lines += all_rows["CRYPTO"][:15]   # BTC ETH BNB SOL XRP DOGE ADA AVAX SHIB TRX TON LINK DOT POL LTC
+    lines.append("  ... (others in ranked opportunities above)")
+
+    # ── Open positions with management hints ─────────────────────────────────
+    lines += ["", "--- OPEN POSITIONS ---"]
     if positions:
         total_upnl = 0.0
-        for key, pos in positions.items():
-            upnl = pos["unrealized_pnl"]
+        for pos in positions.values():
+            upnl     = pos["unrealized_pnl"]
+            gain_pct = pos["gain_pct_of_margin"]
+            loss_pct = pos["loss_pct_of_margin"]
+            age_h    = pos["age_hours"]
             total_upnl += upnl
-            lines.append(
-                f"  {pos['direction']} {pos['symbol']}: entry=${pos['entry_price']:.4f} | now=${pos['current_price']:.4f} | "
-                f"margin=${pos['margin_usd']:.0f} x{pos['leverage']} | uPnL: {'+' if upnl >= 0 else ''}{upnl:.2f}$ | liq=${pos['liq_price']:.2f}"
-            )
-        lines.append(f"  Tong unrealized PnL: {'+' if total_upnl >= 0 else ''}{total_upnl:.2f}$")
-    else:
-        lines.append("  Khong co vi tri nao dang mo.")
+            sgn = "+" if upnl >= 0 else ""
 
-    # News context
+            # Management recommendation
+            if loss_pct >= 25:
+                mgmt = "⚠ CLOSE IMMEDIATELY — approaching -30% auto stop-loss"
+            elif loss_pct >= 20:
+                mgmt = "⚠ CLOSE — hit -20% manual cut threshold"
+            elif gain_pct >= 40:
+                mgmt = "✓ AUTO TAKE-PROFIT will trigger this round"
+            elif gain_pct >= 30:
+                mgmt = "✓ CLOSE — lock in profit (>+30% margin)"
+            elif gain_pct >= 15:
+                mgmt = "~ Let it run OR close to protect profit"
+            elif age_h > 2.0 and -20 < gain_pct < 5:
+                mgmt = f"⏱ TIME-STOP — {age_h:.1f}h open, not profitable, consider closing"
+            else:
+                mgmt = f"Holding {age_h:.1f}h"
+
+            lines.append(
+                f"  {pos['direction']:5} {pos['symbol']:8}  "
+                f"margin=${pos['margin_usd']:.0f} x{pos['leverage']}  "
+                f"entry=${pos['entry_price']:.4f} → now=${pos['current_price']:.4f}  "
+                f"uPnL: {sgn}${upnl:.2f} ({gain_pct:+.1f}%)  "
+                f"liq=${pos['liq_price']:.2f}  |  {mgmt}"
+            )
+        lines.append(f"  Σ unrealized: {'+' if total_upnl >= 0 else ''}${total_upnl:.2f}")
+        lines.append(
+            "  [Auto-managed: stop-loss -30%, take-profit +40%, time-stop 2h. "
+            "Max 10 positions, no duplicate symbol+direction, heat cap 70%.]"
+        )
+    else:
+        lines.append("  No open positions — deploy capital into top opportunities above.")
+
+    # ── News ─────────────────────────────────────────────────────────────────
     try:
         from crypto.services.news_feed import get_news_context
-        lines += ["", "=" * 50]
-        lines.append(get_news_context(limit=12))
+        news = get_news_context(limit=8)
+        if news and news.strip():
+            lines += ["", "--- MARKET NEWS (factor into decisions) ---", news]
     except Exception:
         pass
 
-    lines.append("\nHay quyet dinh LONG/SHORT/CLOSE/HOLD cho vong nay.")
+    lines += [
+        "",
+        "Your turn: output LONG/SHORT/CLOSE/HOLD decisions.",
+        "Prioritize the ranked opportunities. Match leverage to score. Respect heat level.",
+    ]
     return "\n".join(lines)

@@ -11,26 +11,34 @@ _bot_loop_started = False
 _bot_loop_lock = threading.Lock()
 
 
+_CRYPTO_SPOT_ENABLED = False  # Tam dung spot bots, nhuong VRAM cho futures
+_CRYPTO_INTERVAL = 100   # 3x faster than original 5min (was 300s)
+_FUTURES_INTERVAL = 100
+
+
 def _crypto_bot_loop():
-    time.sleep(120)
+    if not _CRYPTO_SPOT_ENABLED:
+        logger.info("Crypto spot bots disabled (_CRYPTO_SPOT_ENABLED=False).")
+        return
+    time.sleep(30)
     while True:
         try:
             from django.core.management import call_command
             call_command("run_crypto_bots")
         except Exception as e:
             logger.error(f"Crypto bot loop error: {e}")
-        time.sleep(5 * 60)
+        time.sleep(_CRYPTO_INTERVAL)
 
 
 def _futures_bot_loop():
-    time.sleep(150)  # Stagger slightly after crypto bots
+    time.sleep(60)  # stagger after crypto bots
     while True:
         try:
             from django.core.management import call_command
             call_command("run_futures_bots")
         except Exception as e:
             logger.error(f"Futures bot loop error: {e}")
-        time.sleep(5 * 60)
+        time.sleep(_FUTURES_INTERVAL)
 
 
 class CryptoConfig(AppConfig):
@@ -59,4 +67,4 @@ class CryptoConfig(AppConfig):
                 _bot_loop_started = True
                 threading.Thread(target=_crypto_bot_loop, daemon=True, name="crypto_bot_loop").start()
                 threading.Thread(target=_futures_bot_loop, daemon=True, name="futures_bot_loop").start()
-                logger.info("Crypto + Futures bot loops started (every 5 min).")
+                logger.info(f"Crypto + Futures bot loops started (interval={_CRYPTO_INTERVAL}s).")

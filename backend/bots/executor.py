@@ -23,6 +23,9 @@ def execute_decisions(user, decisions: list, portfolio: dict) -> list[str]:
     wallet = Wallet.objects.get(user=user)
 
     for dec in decisions:
+        # Refresh wallet từ DB trước mỗi lệnh — tránh dùng balance stale
+        wallet.refresh_from_db()
+
         symbol = dec.get("symbol", "").upper()
         action = dec.get("action", "").upper()
         quantity = int(dec.get("quantity", 0))
@@ -45,9 +48,9 @@ def execute_decisions(user, decisions: list, portfolio: dict) -> list[str]:
 
         if action == "BUY":
             cost = market_price * quantity * Decimal("1.0015")
-            if cost > wallet.balance:
+            if cost > wallet.available_balance:  # Dùng available (balance - frozen)
                 # Giảm số lượng cho vừa túi tiền
-                max_qty = int(wallet.balance / (market_price * Decimal("1.0015")) // 100) * 100
+                max_qty = int(wallet.available_balance / (market_price * Decimal("1.0015")) // 100) * 100
                 if max_qty < 100:
                     logs.append(f"  ❌ {symbol}: không đủ tiền mua {quantity} cổ")
                     continue

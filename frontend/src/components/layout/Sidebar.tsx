@@ -30,7 +30,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-56 bg-dark-surface border-r border-dark-border flex flex-col">
+    <aside className="hidden md:flex w-56 bg-dark-surface border-r border-dark-border flex-col">
       <div className="p-4 border-b border-dark-border">
         <div className="text-white font-bold text-lg">StockSim</div>
         <div className="text-gray-500 text-xs mt-1">Mô phỏng sàn VN</div>

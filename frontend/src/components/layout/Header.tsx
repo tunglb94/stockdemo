@@ -58,23 +58,25 @@ export default function Header() {
   const balance = user?.wallet?.available_balance;
 
   return (
-    <header className="h-11 bg-dark-surface border-b border-dark-border flex items-center justify-between px-4 shrink-0">
-      <div className="flex items-center gap-4">
-        {vn30.length > 0 && (
-          <IndexBadge label="VN30" value={vn30Val} change={vn30Val - base} changePct={avgPct} />
-        )}
+    <header className="h-11 bg-dark-surface border-b border-dark-border flex items-center justify-between px-3 md:px-4 shrink-0">
+      <div className="flex items-center gap-3 md:gap-4 min-w-0">
+        <div className="hidden md:flex items-center gap-4">
+          {vn30.length > 0 && (
+            <IndexBadge label="VN30" value={vn30Val} change={vn30Val - base} changePct={avgPct} />
+          )}
+        </div>
         <MarketStatus />
       </div>
 
-      <div className="flex items-center gap-4 text-xs">
+      <div className="flex items-center gap-2 md:gap-4 text-xs min-w-0">
         {balance !== undefined && (
-          <span>
+          <span className="hidden sm:inline truncate">
             <span className="text-gray-500">Khả dụng: </span>
             <span className="text-price-up font-semibold">{formatCurrency(balance)}đ</span>
           </span>
         )}
-        <span className="text-gray-500">{user?.username}</span>
-        <button onClick={handleLogout} className="text-gray-500 hover:text-red-400 transition">
+        <span className="text-gray-500 hidden sm:inline truncate max-w-[80px]">{user?.username}</span>
+        <button onClick={handleLogout} className="text-gray-500 hover:text-red-400 transition text-xs shrink-0">
           Đăng xuất
         </button>
       </div>

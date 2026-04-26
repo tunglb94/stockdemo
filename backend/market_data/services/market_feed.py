@@ -19,6 +19,9 @@ _TZ = zoneinfo.ZoneInfo("Asia/Ho_Chi_Minh")
 _started = False
 _start_lock = threading.Lock()
 
+# Tam dung VN stock bots de nhuong VRAM cho crypto bots
+BOTS_ENABLED = False
+
 # ── Global rate limiter (chia sẻ giữa tất cả threads) ───────────────────────
 _rate_lock = threading.Lock()
 _rate_times: list = []
@@ -101,6 +104,9 @@ def _run_daily_fetch(label="daily"):
 
 def _run_bots():
     """Chạy tất cả AI bot trader một lần."""
+    if not BOTS_ENABLED:
+        logger.info("[bots] VN stock bots disabled (BOTS_ENABLED=False) — bo qua.")
+        return
     try:
         from django.core.management import call_command
         logger.info("[bots] Bat dau chay AI bots...")
@@ -112,6 +118,8 @@ def _run_bots():
 
 def _pre_market_analysis():
     """Chạy 1 lần trước giờ mở cửa: bot đọc tin tức, phân tích, chuẩn bị lệnh."""
+    if not BOTS_ENABLED:
+        return
     try:
         from django.core.management import call_command
         logger.info("[bots] Pre-market: bat dau phan tich truoc gio mo cua...")

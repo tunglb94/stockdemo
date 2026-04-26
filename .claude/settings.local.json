@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Bash(venv/Scripts/python.exe manage.py startapp bots)"
+      "Bash(venv/Scripts/python.exe manage.py startapp bots)",
+      "PowerShell(ollama list)"
     ]
   }
 }

@@ -1,13 +1,16 @@
 from django.urls import path
 from .views import (
-    CryptoMarketView, CryptoPortfolioView, CryptoTradeView,
-    CryptoBotLeaderboardView, FuturesBotLeaderboardView,
+    CryptoMarketView, CryptoPriceStreamView, CryptoPortfolioView,
+    CryptoTradeView, CryptoBotLeaderboardView, FuturesBotLeaderboardView,
+    FuturesCloseAllView,
 )
 
 urlpatterns = [
-    path("market/", CryptoMarketView.as_view()),
-    path("portfolio/", CryptoPortfolioView.as_view()),
-    path("trade/", CryptoTradeView.as_view()),
-    path("bots/", CryptoBotLeaderboardView.as_view()),
-    path("futures/bots/", FuturesBotLeaderboardView.as_view()),
+    path("market/",              CryptoMarketView.as_view()),
+    path("prices/stream/",       CryptoPriceStreamView.as_view()),
+    path("portfolio/",           CryptoPortfolioView.as_view()),
+    path("trade/",               CryptoTradeView.as_view()),
+    path("bots/",                CryptoBotLeaderboardView.as_view()),
+    path("futures/bots/",        FuturesBotLeaderboardView.as_view()),
+    path("futures/close-all/",   FuturesCloseAllView.as_view()),
 ]
